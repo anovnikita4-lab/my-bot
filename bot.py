@@ -1,256 +1,579 @@
 import asyncio
-import socket
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    Message,
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
 
 from config import TOKEN, ADMIN_ID
+
 from database import (
     init_db,
     add_user,
     get_balance,
-    add_balance,
-    set_balance,
-    get_all_users,
+    get_history,
+    get_clients,
 )
 
-# Используем IPv4
-socket.setdefaulttimeout(30)
+
+# =========================
+# ИНИЦИАЛИЗАЦИЯ
+# =========================
 
 init_db()
 
 bot = Bot(token=TOKEN)
+
 dp = Dispatcher()
 
-# ------------------------
-# Клавиатуры
-# ------------------------
 
-main_kb = ReplyKeyboardMarkup(
+
+# =========================
+# КНОПКИ ПАРТНЁРА
+# =========================
+
+
+partner_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🚗 Подобрать автомобиль")],
-        [KeyboardButton(text="🤝 Стать партнёром")],
-        [KeyboardButton(text="🔗 Моя ссылка")],
-        [KeyboardButton(text="💰 Баланс")],
-        [KeyboardButton(text="📞 Поддержка")],
+        [
+            KeyboardButton(
+                text="🔗 Моя ссылка"
+            )
+        ],
+        [
+            KeyboardButton(
+                text="👥 Мои клиенты"
+            )
+        ],
+        [
+            KeyboardButton(
+                text="💰 Мой баланс"
+            )
+        ],
+        [
+            KeyboardButton(
+                text="📜 История"
+            )
+        ],
     ],
-    resize_keyboard=True,
+    resize_keyboard=True
 )
+
+
+
+# =========================
+# КНОПКИ АДМИНА
+# =========================
+
 
 admin_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="👥 Все партнёры")],
-        [KeyboardButton(text="💰 Начислить комиссию")],
-        [KeyboardButton(text="🔄 Обнулить баланс")],
-        [KeyboardButton(text="⚠️ Обнулить все балансы")],
+        [
+            KeyboardButton(
+                text="👥 Партнёры"
+            )
+        ],
+        [
+            KeyboardButton(
+                text="🚗 Сделки"
+            )
+        ],
+        [
+            KeyboardButton(
+                text="📊 Статистика"
+            )
+        ],
     ],
-    resize_keyboard=True,
+    resize_keyboard=True
 )
 
-# ------------------------
-# /start
-# ------------------------
+
+
+# =========================
+# START
+# =========================
+
 
 @dp.message(CommandStart())
 async def start(message: Message):
+
     user = message.from_user
+
+    args = message.text.split()
+
+    invited_by = None
+
+
+    # если человек пришёл по ссылке партнёра
+
+    if len(args) > 1:
+
+        try:
+            invited_by = int(args[1])
+
+        except:
+            pass
+
+
 
     add_user(
         telegram_id=user.id,
         username=user.username,
         full_name=user.full_name,
+        invited_by=invited_by
     )
+
 
     await message.answer(
-        "Добро пожаловать в NY Партнёры!",
-        reply_markup=main_kb,
+        "🚗 Добро пожаловать в NY Партнёры!\n\n"
+        "Здесь можно получать комиссию "
+        "за клиентов на подбор автомобилей.",
+        reply_markup=partner_kb
     )
 
-# ------------------------
-# /admin
-# ------------------------
 
-@dp.message(Command("admin"))
-async def admin(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Доступ запрещён.")
-        return
+
+# =========================
+# МОЯ ССЫЛКА
+# =========================
+
+
+@dp.message(
+    F.text == "🔗 Моя ссылка"
+)
+async def my_link(message: Message):
+
+    me = await bot.get_me()
+
+
+    link = (
+        f"https://t.me/"
+        f"{me.username}"
+        f"?start={message.from_user.id}"
+    )
+
 
     await message.answer(
-        "Добро пожаловать в админ-панель.",
-        reply_markup=admin_kb,
+        "Ваша партнёрская ссылка:\n\n"
+        f"{link}\n\n"
+        "Отправляйте её клиентам."
     )
 
-# ------------------------
-# /partners
-# ------------------------
 
-@dp.message(Command("partners"))
-async def partners(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Доступ запрещён.")
-        return
 
-    users = get_all_users()
+# =========================
+# БАЛАНС
+# =========================
 
-    if not users:
-        await message.answer("Партнёров пока нет.")
-        return
 
-    text = "Партнёры:\\n\\n"
+@dp.message(
+    F.text == "💰 Мой баланс"
+)
+async def my_balance(message: Message):
 
-    for telegram_id, full_name, balance in users:
-        text += (
-            f"{full_name}\\n"
-            f"ID: {telegram_id}\\n"
-            f"Баланс: {balance} ₽\\n\\n"
+    balance = get_balance(
+        message.from_user.id
+    )
+
+
+    await message.answer(
+        f"💰 Ваш баланс:\n\n"
+        f"{balance} ₽"
+    )
+
+
+
+# =========================
+# МОИ КЛИЕНТЫ
+# =========================
+
+
+@dp.message(
+    F.text == "👥 Мои клиенты"
+)
+async def my_clients(message: Message):
+
+    clients = get_clients(
+        message.from_user.id
+    )
+
+
+    if not clients:
+
+        await message.answer(
+            "У вас пока нет клиентов."
         )
+
+        return
+
+
+    text = "👥 Ваши клиенты:\n\n"
+
+
+    for client in clients:
+
+        text += (
+            f"ID клиента: {client[0]}\n"
+        )
+
 
     await message.answer(text)
 
-# ------------------------
-# /commission ID СУММА
-# ------------------------
 
-@dp.message(Command("commission"))
-async def commission(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Доступ запрещён.")
-        return
 
-    parts = message.text.split()
+# =========================
+# ИСТОРИЯ
+# =========================
 
-    if len(parts) != 3:
-        await message.answer(
-            "Использование:\\n/commission ID СУММА\\n\\nПример:\\n/commission 1877434604 15000"
-        )
-        return
 
-    try:
-        partner_id = int(parts[1])
-        amount = int(parts[2])
-    except ValueError:
-        await message.answer("ID и сумма должны быть числами.")
-        return
+@dp.message(
+    F.text == "📜 История"
+)
+async def history(message: Message):
 
-    add_balance(partner_id, amount)
-
-    await message.answer(
-        f"Начислено {amount} ₽ партнёру {partner_id}."
+    data = get_history(
+        message.from_user.id
     )
 
-    try:
-        await bot.send_message(
-            chat_id=partner_id,
-            text=f"По вашей сделке начислена комиссия {amount} ₽.",
-        )
-    except Exception:
-        pass
 
-# ------------------------
-# /resetbalance ID
-# ------------------------
+    if not data:
 
-@dp.message(Command("resetbalance"))
-async def resetbalance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Доступ запрещён.")
-        return
-
-    parts = message.text.split()
-
-    if len(parts) != 2:
         await message.answer(
-            "Использование:\\n/resetbalance ID"
+            "История пока пустая."
         )
+
         return
 
-    try:
-        partner_id = int(parts[1])
-    except ValueError:
-        await message.answer("ID должен быть числом.")
+
+    text = "📜 История начислений:\n\n"
+
+
+    for amount, deal_id, date in data:
+
+        text += (
+            f"Сделка №{deal_id}\n"
+            f"+{amount} ₽\n"
+            f"{date}\n\n"
+        )
+
+
+    await message.answer(text)
+    # =========================
+# ПРОВЕРКА АДМИНА
+# =========================
+
+def is_admin(user_id):
+
+    return user_id == ADMIN_ID
+
+
+
+# =========================
+# АДМИН ПАНЕЛЬ
+# =========================
+
+
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        await message.answer(
+            "⛔ Доступ запрещён."
+        )
+
         return
 
-    set_balance(partner_id, 0)
 
     await message.answer(
-        f"Баланс партнёра {partner_id} обнулён."
+        "👑 Админ-панель\n\n"
+        "Доступные команды:\n\n"
+        "/partners - список партнёров\n"
+        "/deals - список сделок\n"
+        "/deal ID_клиента ID_партнёра\n"
+        "/done ID_сделки сумма",
+        reply_markup=admin_kb
     )
 
-# ------------------------
-# /resetall
-# ------------------------
 
-@dp.message(Command("resetall"))
-async def resetall(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Доступ запрещён.")
+
+# =========================
+# СПИСОК ПАРТНЁРОВ
+# =========================
+
+
+@dp.message(Command("partners"))
+async def partners(message: Message):
+
+    if not is_admin(message.from_user.id):
+
         return
+
+
+    from database import get_all_users
+
 
     users = get_all_users()
 
-    for telegram_id, _, _ in users:
-        set_balance(telegram_id, 0)
 
-    await message.answer(
-        "Балансы всех партнёров обнулены."
+    if not users:
+
+        await message.answer(
+            "Партнёров нет."
+        )
+
+        return
+
+
+    text = "👥 Партнёры:\n\n"
+
+
+    for user_id, name, balance in users:
+
+        text += (
+            f"👤 {name}\n"
+            f"ID: {user_id}\n"
+            f"Баланс: {balance} ₽\n\n"
+        )
+
+
+    await message.answer(text)
+
+
+
+# =========================
+# СОЗДАТЬ СДЕЛКУ
+# =========================
+
+@dp.message(Command("deal"))
+async def create_deal_cmd(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        return
+
+
+    from database import create_deal
+
+
+    args = message.text.split()
+
+
+    if len(args) != 3:
+
+        await message.answer(
+            "Формат:\n"
+            "/deal ID_клиента ID_партнёра"
+        )
+
+        return
+
+
+    try:
+
+        client_id = int(args[1])
+        partner_id = int(args[2])
+
+
+    except:
+
+        await message.answer(
+            "ID должны быть числами."
+        )
+
+        return
+
+
+
+    deal_id = create_deal(
+        client_id,
+        partner_id
     )
 
-# ------------------------
-# Кнопки
-# ------------------------
-
-@dp.message(F.text == "🚗 Подобрать автомобиль")
-async def pick_car(message: Message):
-    await message.answer(
-        "Напишите, какой автомобиль вы хотите найти."
-    )
-
-@dp.message(F.text == "🤝 Стать партнёром")
-async def become_partner(message: Message):
-    await message.answer(
-        "Вы уже зарегистрированы как партнёр NY."
-    )
-
-@dp.message(F.text == "🔗 Моя ссылка")
-async def mylink(message: Message):
-    me = await bot.get_me()
-
-    link = f"https://t.me/{me.username}?start={message.from_user.id}"
 
     await message.answer(
-        f"Ваша партнёрская ссылка:\\n\\n{link}"
+        f"🚗 Сделка создана\n\n"
+        f"Номер: #{deal_id}\n"
+        f"Клиент: {client_id}\n"
+        f"Партнёр: {partner_id}\n"
+        f"Статус: Новая"
     )
 
-@dp.message(F.text == "💰 Баланс")
-async def balance(message: Message):
-    bal = get_balance(message.from_user.id)
+
+
+# =========================
+# СПИСОК СДЕЛОК
+# =========================
+
+
+@dp.message(Command("deals"))
+async def deals(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        return
+
+
+    from database import get_deals
+
+
+    data = get_deals()
+
+
+    if not data:
+
+        await message.answer(
+            "Сделок пока нет."
+        )
+
+        return
+
+
+
+    text = "🚗 Сделки:\n\n"
+
+
+    for deal in data:
+
+        deal_id, client, partner, status, money = deal
+
+
+        text += (
+            f"#{deal_id}\n"
+            f"Клиент: {client}\n"
+            f"Партнёр: {partner}\n"
+            f"Статус: {status}\n"
+            f"Комиссия: {money} ₽\n\n"
+        )
+
+
+    await message.answer(text)
+
+
+
+# =========================
+# ЗАВЕРШИТЬ СДЕЛКУ
+# =========================
+
+
+@dp.message(Command("done"))
+async def done_deal(message: Message):
+
+    if not is_admin(message.from_user.id):
+
+        return
+
+
+    from database import finish_deal
+
+
+    args = message.text.split()
+
+
+    if len(args) != 3:
+
+        await message.answer(
+            "Формат:\n"
+            "/done ID_сделки сумма"
+        )
+
+        return
+
+
+
+    try:
+
+        deal_id = int(args[1])
+        amount = int(args[2])
+
+
+    except:
+
+        await message.answer(
+            "ID и сумма должны быть числами."
+        )
+
+        return
+
+
+
+    partner_id = finish_deal(
+        deal_id,
+        amount
+    )
+
+
+    if not partner_id:
+
+        await message.answer(
+            "Сделка не найдена."
+        )
+
+        return
+
+
 
     await message.answer(
-        f"Ваш баланс: {bal} ₽"
+        "✅ Сделка завершена\n\n"
+        f"Начислено: {amount} ₽\n"
+        f"Партнёр: {partner_id}"
     )
 
-@dp.message(F.text == "📞 Поддержка")
-async def support(message: Message):
-    await message.answer(
-        "Напишите: @your_username"
-    )
 
-@dp.message()
-async def other(message: Message):
-    await message.answer(
-        "Используйте кнопки меню ниже.",
-        reply_markup=main_kb,
-    )
+    try:
 
-# ------------------------
-# Запуск
-# ------------------------
+        await bot.send_message(
+            partner_id,
+            "🎉 Поздравляем!\n\n"
+            "Ваша сделка завершена.\n"
+            f"Начислено: {amount} ₽"
+        )
+
+    except:
+
+        pass
+
+
+
+# =========================
+# КНОПКИ АДМИНА
+# =========================
+
+
+@dp.message(
+    F.text == "👥 Партнёры"
+)
+async def partners_button(message: Message):
+
+    await partners(message)
+
+
+
+@dp.message(
+    F.text == "🚗 Сделки"
+)
+async def deals_button(message: Message):
+
+    await deals(message)
+
+
+
+# =========================
+# ЗАПУСК
+# =========================
+
 
 async def main():
+
     print("Бот запущен...")
+
     await dp.start_polling(bot)
 
+
+
 if __name__ == "__main__":
+
     asyncio.run(main())
