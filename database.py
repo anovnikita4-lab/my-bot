@@ -1,174 +1,469 @@
 import sqlite3
+from datetime import datetime
+
 
 DB_NAME = "database.db"
 
 
-def get_connection():
+def connect():
     return sqlite3.connect(DB_NAME)
 
 
+# =========================
+# СОЗДАНИЕ БАЗЫ
+# =========================
+
 def init_db():
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            telegram_id INTEGER PRIMARY KEY,
-            username TEXT,
-            full_name TEXT,
-            balance INTEGER DEFAULT 0
-        )
-        """
+    # пользователи
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        telegram_id INTEGER PRIMARY KEY,
+        username TEXT,
+        full_name TEXT,
+        balance INTEGER DEFAULT 0,
+        invited_by INTEGER DEFAULT NULL
     )
+    """)
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id INTEGER UNIQUE,
-            partner_id INTEGER,
-            status TEXT DEFAULT 'Новый',
-            commission INTEGER DEFAULT 0
-        )
-        """
+
+    # клиенты
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS clients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER UNIQUE,
+        partner_id INTEGER,
+        created_at TEXT
     )
+    """)
+
+
+    # сделки
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS deals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER,
+        partner_id INTEGER,
+        status TEXT DEFAULT 'Новая',
+        commission INTEGER DEFAULT 0,
+        created_at TEXT,
+        completed_at TEXT
+    )
+    """)
+
+
+    # история денег
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        partner_id INTEGER,
+        amount INTEGER,
+        deal_id INTEGER,
+        type TEXT,
+        created_at TEXT
+    )
+    """)
+
 
     conn.commit()
     conn.close()
 
 
-def add_user(telegram_id, username, full_name):
-    conn = get_connection()
+
+# =========================
+# ПОЛЬЗОВАТЕЛИ
+# =========================
+
+def add_user(telegram_id, username, full_name, invited_by=None):
+
+    conn = connect()
     cur = conn.cursor()
 
-    cur.execute(
-        """
-        INSERT OR IGNORE INTO users
-        (telegram_id, username, full_name)
-        VALUES (?, ?, ?)
-        """,
-        (telegram_id, username, full_name),
+    cur.execute("""
+    INSERT OR IGNORE INTO users
+    (
+    telegram_id,
+    username,
+    full_name,
+    invited_by
     )
+    VALUES (?, ?, ?, ?)
+    """,
+    (
+        telegram_id,
+        username,
+        full_name,
+        invited_by
+    ))
 
     conn.commit()
     conn.close()
+
+
+
+def get_user(telegram_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT * FROM users WHERE telegram_id=?",
+        (telegram_id,)
+    )
+
+    result = cur.fetchone()
+
+    conn.close()
+
+    return result
+
 
 
 def get_balance(telegram_id):
-    conn = get_connection()
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT balance FROM users WHERE telegram_id = ?",
-        (telegram_id,),
+        """
+        SELECT balance
+        FROM users
+        WHERE telegram_id=?
+        """,
+        (telegram_id,)
     )
 
-    row = cur.fetchone()
+    result = cur.fetchone()
+
     conn.close()
 
-    return row[0] if row else 0
+    if result:
+        return result[0]
+
+    return 0
 
 
-def add_balance(telegram_id, amount):
-    conn = get_connection()
+
+def add_balance(partner_id, amount):
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "UPDATE users SET balance = balance + ? WHERE telegram_id = ?",
-        (amount, telegram_id),
+        """
+        UPDATE users
+        SET balance = balance + ?
+        WHERE telegram_id=?
+        """,
+        (
+            amount,
+            partner_id
+        )
     )
 
     conn.commit()
     conn.close()
 
 
-def set_balance(telegram_id, amount):
-    conn = get_connection()
+
+def set_balance(partner_id, amount):
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "UPDATE users SET balance = ? WHERE telegram_id = ?",
-        (amount, telegram_id),
+        """
+        UPDATE users
+        SET balance=?
+        WHERE telegram_id=?
+        """,
+        (
+            amount,
+            partner_id
+        )
     )
 
     conn.commit()
     conn.close()
+
 
 
 def get_all_users():
-    conn = get_connection()
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT telegram_id, full_name, balance FROM users ORDER BY full_name"
+        """
+        SELECT telegram_id,
+        full_name,
+        balance
+        FROM users
+        ORDER BY full_name
+        """
     )
 
-    rows = cur.fetchall()
+    data = cur.fetchall()
+
     conn.close()
 
-    return rows
+    return data
+
+
+
+# =========================
+# КЛИЕНТЫ
+# =========================
 
 
 def add_client(client_id, partner_id):
-    conn = get_connection()
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
         """
         INSERT OR IGNORE INTO clients
-        (client_id, partner_id)
-        VALUES (?, ?)
+        (
+        telegram_id,
+        partner_id,
+        created_at
+        )
+        VALUES (?, ?, ?)
         """,
-        (client_id, partner_id),
+        (
+            client_id,
+            partner_id,
+            datetime.now().strftime("%d.%m.%Y")
+        )
     )
 
     conn.commit()
     conn.close()
 
 
-def get_partner_clients(partner_id):
-    conn = get_connection()
+
+def get_clients(partner_id):
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT client_id, status FROM clients WHERE partner_id = ?",
-        (partner_id,),
+        """
+        SELECT telegram_id
+        FROM clients
+        WHERE partner_id=?
+        """,
+        (partner_id,)
     )
 
-    rows = cur.fetchall()
+    data = cur.fetchall()
+
     conn.close()
 
-    return rows
+    return data
 
 
-def get_all_clients():
-    conn = get_connection()
+
+# =========================
+# СДЕЛКИ
+# =========================
+
+
+def create_deal(client_id, partner_id):
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT client_id, partner_id, status FROM clients ORDER BY id DESC"
+        """
+        INSERT INTO deals
+        (
+        client_id,
+        partner_id,
+        status,
+        created_at
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            client_id,
+            partner_id,
+            "Новая",
+            datetime.now().strftime("%d.%m.%Y")
+        )
     )
 
-    rows = cur.fetchall()
+    deal_id = cur.lastrowid
+
+    conn.commit()
     conn.close()
 
-    return rows
+    return deal_id
 
 
-def set_client_status(client_id, status):
-    conn = get_connection()
+
+def get_deals():
+
+    conn = connect()
     cur = conn.cursor()
 
     cur.execute(
-        "UPDATE clients SET status = ? WHERE client_id = ?",
-        (status, client_id),
+        """
+        SELECT
+        id,
+        client_id,
+        partner_id,
+        status,
+        commission
+        FROM deals
+        ORDER BY id DESC
+        """
+    )
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
+
+
+
+def set_deal_status(deal_id, status):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE deals
+        SET status=?
+        WHERE id=?
+        """,
+        (
+            status,
+            deal_id
+        )
     )
 
     conn.commit()
     conn.close()
 
 
-if __name__ == "__main__":
-    init_db()
-    print("База данных готова!")
+
+def finish_deal(deal_id, amount):
+
+    conn = connect()
+    cur = conn.cursor()
+
+
+    cur.execute(
+        """
+        SELECT partner_id
+        FROM deals
+        WHERE id=?
+        """,
+        (deal_id,)
+    )
+
+    deal = cur.fetchone()
+
+
+    if not deal:
+        conn.close()
+        return None
+
+
+    partner_id = deal[0]
+
+
+    cur.execute(
+        """
+        UPDATE deals
+        SET
+        status='Завершена',
+        commission=?,
+        completed_at=?
+        WHERE id=?
+        """,
+        (
+            amount,
+            datetime.now().strftime("%d.%m.%Y"),
+            deal_id
+        )
+    )
+
+
+    cur.execute(
+        """
+        UPDATE users
+        SET balance = balance + ?
+        WHERE telegram_id=?
+        """,
+        (
+            amount,
+            partner_id
+        )
+    )
+
+
+    cur.execute(
+        """
+        INSERT INTO transactions
+        (
+        partner_id,
+        amount,
+        deal_id,
+        type,
+        created_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            partner_id,
+            amount,
+            deal_id,
+            "Комиссия",
+            datetime.now().strftime("%d.%m.%Y")
+        )
+    )
+
+
+    conn.commit()
+    conn.close()
+
+
+    return partner_id
+
+
+
+# =========================
+# ИСТОРИЯ
+# =========================
+
+
+def get_history(partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT amount,
+        deal_id,
+        created_at
+        FROM transactions
+        WHERE partner_id=?
+        ORDER BY id DESC
+        """,
+        (partner_id,)
+    )
+
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
