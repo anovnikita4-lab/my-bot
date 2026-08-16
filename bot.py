@@ -18,6 +18,7 @@ from database import (
     get_clients,
     delete_user,
     get_partners,
+    get_all_users
 )
 
 
@@ -729,3 +730,15 @@ async def partners(message: Message):
 
 
     await message.answer(text)
+    
+@dp.message(Command("checkdb"))
+async def checkdb(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    users = get_all_users()
+
+    await message.answer(
+        f"В базе пользователей: {len(users)}"
+    )
