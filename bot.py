@@ -683,3 +683,49 @@ async def delete_partner(message: Message):
     await message.answer(
         f"✅ Партнёр {user_id} удалён"
     )
+    
+# =========================
+# СПИСОК ПАРТНЁРОВ
+# =========================
+
+@dp.message(Command("partners"))
+async def partners(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        await message.answer(
+            "⛔ Нет доступа"
+        )
+        return
+
+
+    users = get_partners()
+
+
+    if not users:
+        await message.answer(
+            "Партнёров пока нет."
+        )
+        return
+
+
+    text = "👥 Список партнёров:\n\n"
+
+
+    for user in users:
+
+        telegram_id = user[0]
+        username = user[1]
+        name = user[2]
+        balance = user[3]
+
+
+        text += (
+            f"👤 {name}\n"
+            f"🆔 ID: {telegram_id}\n"
+            f"📱 @{username}\n"
+            f"💰 Баланс: {balance} ₽\n"
+            f"----------------\n"
+        )
+
+
+    await message.answer(text)
