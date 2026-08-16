@@ -14,6 +14,7 @@ from config import TOKEN, ADMIN_ID
 from database import (
     init_db,
     add_user,
+    get_user,
     get_balance,
     get_history,
     get_clients,
@@ -38,15 +39,10 @@ socket.setdefaulttimeout(30)
 
 
 # =========================================================
-# ИНИЦИАЛИЗАЦИЯ БАЗЫ
+# ИНИЦИАЛИЗАЦИЯ
 # =========================================================
 
 init_db()
-
-
-# =========================================================
-# TELEGRAM
-# =========================================================
 
 bot = Bot(token=TOKEN)
 
@@ -91,13 +87,11 @@ partner_kb = ReplyKeyboardMarkup(
 admin_kb = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text="👥 Партнёры")
+            KeyboardButton(text="👥 Партнёры"),
+            KeyboardButton(text="🚗 Сделки"),
         ],
         [
-            KeyboardButton(text="🚗 Сделки")
-        ],
-        [
-            KeyboardButton(text="📊 Статистика")
+            KeyboardButton(text="📊 Статистика"),
         ],
     ],
     resize_keyboard=True,
@@ -116,19 +110,13 @@ async def start(message: Message):
     if user is None:
         return
 
-    # -----------------------------------------------------
-    # Получаем аргумент партнёрской ссылки
-    #
-    # /start
-    #
-    # или
-    #
-    # /start 123456789
-    # -----------------------------------------------------
-
     args = message.text.split()
 
     invited_by = None
+
+    # -----------------------------------------------------
+    # /start ID
+    # -----------------------------------------------------
 
     if len(args) > 1:
 
@@ -139,7 +127,14 @@ async def start(message: Message):
             invited_by = None
 
     # -----------------------------------------------------
-    # Сохраняем пользователя
+    # Нельзя пригласить самого себя
+    # -----------------------------------------------------
+
+    if invited_by == user.id:
+        invited_by = None
+
+    # -----------------------------------------------------
+    # Добавляем пользователя
     # -----------------------------------------------------
 
     add_user(
@@ -157,15 +152,15 @@ async def start(message: Message):
 
         await message.answer(
             "👑 Добро пожаловать, администратор!\n\n"
-            "Вы находитесь в системе управления "
-            "партнёрской программой.",
+            "Админ-панель доступна ниже.\n\n"
+            "Используйте /admin для полного списка команд.",
             reply_markup=admin_kb,
         )
 
         return
 
     # -----------------------------------------------------
-    # Обычный пользователь / партнёр
+    # Обычный пользователь
     # -----------------------------------------------------
 
     await message.answer(
@@ -178,42 +173,36 @@ async def start(message: Message):
 
 
 # =========================================================
-# МОЯ ПАРТНЁРСКАЯ ССЫЛКА
+# МОЯ ССЫЛКА
 # =========================================================
 
 @dp.message(F.text == "🔗 Моя ссылка")
 async def my_link(message: Message):
 
-    if is_admin(message.from_user.id):
+    user = message.from_user
+
+    if user is None:
+        return
+
+    me = await bot.get_me()
+
+    if not me.username:
 
         await message.answer(
-            "👑 Вы вошли как администратор."
+            "❌ Не удалось получить username бота."
         )
 
         return
 
-    try:
+    link = f"https://t.me/{me.username}?start={user.id}"
 
-        me = await bot.get_me()
-
-        link = (
-            f"https://t.me/{me.username}"
-            f"?start={message.from_user.id}"
-        )
-
-        await message.answer(
-            "🔗 Ваша партнёрская ссылка:\n\n"
-            f"{link}\n\n"
-            "Отправляйте её клиентам.\n"
-            "Когда клиент перейдёт по ссылке, "
-            "он автоматически будет привязан к вам."
-        )
-
-    except Exception:
-
-        await message.answer(
-            "❌ Не удалось получить партнёрскую ссылку."
-        )
+    await message.answer(
+        "🔗 Ваша партнёрская ссылка:\n\n"
+        f"{link}\n\n"
+        "Отправляйте её клиентам.\n"
+        "Когда клиент перейдёт по ссылке, "
+        "он будет привязан к вам."
+    )
 
 
 # =========================================================
@@ -223,31 +212,36 @@ async def my_link(message: Message):
 @dp.message(F.text == "👥 Мои клиенты")
 async def clients(message: Message):
 
-    users = get_clients(
-        message.from_user.id
-    )
+    user = message.from_user
+
+    if user is None:
+        return
+
+    users = get_clients(user.id)
 
     if not users:
 
         await message.answer(
-            "👥 У вас пока нет клиентов."
+            "👥 У вас пока нет клиентов.\n\n"
+            "Отправьте клиенту вашу партнёрскую ссылку."
         )
 
         return
 
     text = "👥 ВАШИ КЛИЕНТЫ\n\n"
 
-    for user in users:
+    for client in users:
 
-        telegram_id = user[0]
-        username = user[1]
-        name = user[2]
+        telegram_id = client[0]
+        username = client[1]
+        name = client[2]
 
         if username:
 
             text += (
                 f"👤 @{username}\n"
                 f"🆔 ID: {telegram_id}\n"
+                f"📛 Имя: {name}\n"
                 f"────────────────\n"
             )
 
@@ -269,13 +263,16 @@ async def clients(message: Message):
 @dp.message(F.text == "💰 Мой баланс")
 async def my_balance(message: Message):
 
-    balance = get_balance(
-        message.from_user.id
-    )
+    user = message.from_user
+
+    if user is None:
+        return
+
+    balance = get_balance(user.id)
 
     await message.answer(
         "💰 ВАШ БАЛАНС\n\n"
-        f"💵 {balance} ₽"
+        f"💵 {balance:,} ₽".replace(",", " ")
     )
 
 
@@ -286,16 +283,19 @@ async def my_balance(message: Message):
 @dp.message(F.text == "📜 История")
 async def history(message: Message):
 
-    data = get_history(
-        message.from_user.id
-    )
+    user = message.from_user
+
+    if user is None:
+        return
+
+    data = get_history(user.id)
 
     if not data:
 
         await message.answer(
             "📜 История пока пустая.\n\n"
-            "После завершения сделки здесь "
-            "появится информация о начислениях."
+            "Здесь будут отображаться "
+            "начисления по завершённым сделкам."
         )
 
         return
@@ -304,9 +304,11 @@ async def history(message: Message):
 
     for amount, deal_id, date in data:
 
+        formatted_amount = f"{amount:,}".replace(",", " ")
+
         text += (
             f"🚗 Сделка №{deal_id}\n"
-            f"💰 +{amount} ₽\n"
+            f"💰 +{formatted_amount} ₽\n"
             f"📅 {date}\n"
             f"────────────────\n"
         )
@@ -334,11 +336,11 @@ async def admin_panel(message: Message):
 
         "👥 ПАРТНЁРЫ\n"
         "/partners — список партнёров\n"
-        "/add_partner ID — добавить партнёра\n"
-        "/remove_partner ID — убрать партнёра\n"
+        "/add_partner ID — назначить партнёра\n"
+        "/remove_partner ID — убрать статус партнёра\n"
         "/delete_partner ID — удалить пользователя\n\n"
 
-        "💰 БАЛАНС\n"
+        "💰 ФИНАНСЫ\n"
         "/commission ID СУММА — начислить комиссию\n"
         "/resetbalance ID — обнулить баланс\n"
         "/resetall — обнулить все балансы\n\n"
@@ -348,7 +350,7 @@ async def admin_panel(message: Message):
         "/deals — список сделок\n"
         "/done ID_сделки СУММА — завершить сделку\n\n"
 
-        "📊 СТАТИСТИКА\n"
+        "📊 СИСТЕМА\n"
         "/stats — статистика\n"
         "/checkdb — количество пользователей",
         reply_markup=admin_kb,
@@ -376,7 +378,7 @@ async def partners(message: Message):
 
         await message.answer(
             "👥 Партнёров пока нет.\n\n"
-            "Добавить партнёра можно командой:\n"
+            "Чтобы назначить партнёра:\n"
             "/add_partner ID"
         )
 
@@ -391,6 +393,8 @@ async def partners(message: Message):
         name = user[2]
         balance = user[3]
 
+        formatted_balance = f"{balance:,}".replace(",", " ")
+
         if username:
             username_text = f"@{username}"
         else:
@@ -400,7 +404,7 @@ async def partners(message: Message):
             f"👤 {name}\n"
             f"🆔 ID: {telegram_id}\n"
             f"📱 {username_text}\n"
-            f"💰 Баланс: {balance} ₽\n"
+            f"💰 Баланс: {formatted_balance} ₽\n"
             f"────────────────\n"
         )
 
@@ -408,7 +412,7 @@ async def partners(message: Message):
 
 
 # =========================================================
-# КНОПКА "ПАРТНЁРЫ"
+# КНОПКА ПАРТНЁРЫ
 # =========================================================
 
 @dp.message(F.text == "👥 Партнёры")
@@ -419,8 +423,6 @@ async def partners_button(message: Message):
 
 # =========================================================
 # ДОБАВИТЬ ПАРТНЁРА
-#
-# /add_partner ID
 # =========================================================
 
 @dp.message(Command("add_partner"))
@@ -450,7 +452,7 @@ async def add_partner_cmd(message: Message):
 
     try:
 
-        user_id = int(args[1])
+        partner_id = int(args[1])
 
     except ValueError:
 
@@ -460,50 +462,55 @@ async def add_partner_cmd(message: Message):
 
         return
 
-    # Проверяем существование пользователя
+    user = get_user(partner_id)
 
-    users = get_all_users()
-
-    exists = False
-
-    for user in users:
-
-        if user[0] == user_id:
-
-            exists = True
-            break
-
-    if not exists:
+    if not user:
 
         await message.answer(
-            "❌ Пользователь с таким ID "
-            "не найден в базе.\n\n"
-            "Сначала пользователь должен "
-            "запустить бота через /start."
+            "❌ Пользователь с таким ID ещё не запускал бота.\n\n"
+            "Сначала пользователь должен открыть бота "
+            "и нажать /start."
         )
 
         return
 
-    changed = add_partner(user_id)
+    changed = add_partner(partner_id)
 
-    if changed:
-
-        await message.answer(
-            "✅ ПАРТНЁР ДОБАВЛЕН\n\n"
-            f"🆔 ID: {user_id}"
-        )
-
-    else:
+    if not changed:
 
         await message.answer(
-            "⚠️ Не удалось добавить партнёра."
+            "⚠️ Пользователь уже является партнёром."
         )
+
+        return
+
+    await message.answer(
+        "✅ ПАРТНЁР ДОБАВЛЕН\n\n"
+        f"🆔 ID: {partner_id}\n"
+        f"👤 Имя: {user[2]}\n\n"
+        "Теперь пользователь является партнёром."
+    )
+
+    try:
+
+        await bot.send_message(
+            chat_id=partner_id,
+            text=(
+                "🎉 Поздравляем!\n\n"
+                "Вы стали партнёром NY Партнёры.\n\n"
+                "Откройте меню бота и нажмите "
+                "«🔗 Моя ссылка», чтобы получить "
+                "свою партнёрскую ссылку."
+            ),
+        )
+
+    except Exception:
+
+        pass
 
 
 # =========================================================
 # УБРАТЬ ПАРТНЁРА
-#
-# /remove_partner ID
 # =========================================================
 
 @dp.message(Command("remove_partner"))
@@ -531,7 +538,7 @@ async def remove_partner_cmd(message: Message):
 
     try:
 
-        user_id = int(args[1])
+        partner_id = int(args[1])
 
     except ValueError:
 
@@ -541,26 +548,24 @@ async def remove_partner_cmd(message: Message):
 
         return
 
-    changed = remove_partner(user_id)
+    changed = remove_partner(partner_id)
 
-    if changed:
-
-        await message.answer(
-            "✅ ПАРТНЁР УБРАН\n\n"
-            f"🆔 ID: {user_id}"
-        )
-
-    else:
+    if not changed:
 
         await message.answer(
-            "❌ Пользователь с таким ID не найден."
+            "❌ Пользователь не найден."
         )
+
+        return
+
+    await message.answer(
+        "✅ Статус партнёра снят.\n\n"
+        f"🆔 ID: {partner_id}"
+    )
 
 
 # =========================================================
 # ПРОВЕРКА БАЗЫ
-#
-# /checkdb
 # =========================================================
 
 @dp.message(Command("checkdb"))
@@ -576,20 +581,14 @@ async def checkdb(message: Message):
 
     users = get_all_users()
 
-    partners_list = get_partners()
-
-    deals_list = get_deals()
-
     await message.answer(
         "🗄 ПРОВЕРКА БАЗЫ\n\n"
-        f"👥 Пользователей: {len(users)}\n"
-        f"🤝 Партнёров: {len(partners_list)}\n"
-        f"🚗 Сделок: {len(deals_list)}"
+        f"👥 Пользователей: {len(users)}"
     )
 
 
 # =========================================================
-# НАЧИСЛИТЬ КОМИССИЮ
+# НАЧИСЛЕНИЕ КОМИССИИ
 #
 # /commission ID СУММА
 # =========================================================
@@ -640,47 +639,29 @@ async def commission(message: Message):
 
         return
 
-    # Проверяем партнёра
+    user = get_user(partner_id)
 
-    user = None
-
-    users = get_all_users()
-
-    for item in users:
-
-        if item[0] == partner_id:
-
-            user = item
-            break
-
-    if user is None:
+    if not user:
 
         await message.answer(
-            "❌ Пользователь с таким ID "
-            "не найден в базе."
+            "❌ Пользователь не найден."
         )
 
         return
-
-    # Начисляем
 
     add_balance(
         partner_id,
         amount
     )
 
-    new_balance = get_balance(
-        partner_id
-    )
+    balance = get_balance(partner_id)
 
     await message.answer(
         "✅ КОМИССИЯ НАЧИСЛЕНА\n\n"
         f"👤 Партнёр: {partner_id}\n"
-        f"💰 Начислено: {amount} ₽\n"
-        f"💵 Новый баланс: {new_balance} ₽"
+        f"💰 Начислено: {amount:,} ₽\n"
+        f"💵 Новый баланс: {balance:,} ₽".replace(",", " ")
     )
-
-    # Уведомляем партнёра
 
     try:
 
@@ -688,9 +669,9 @@ async def commission(message: Message):
             chat_id=partner_id,
             text=(
                 "🎉 Вам начислена комиссия!\n\n"
-                f"💰 Начислено: {amount} ₽\n"
-                f"💵 Ваш баланс: {new_balance} ₽"
-            ),
+                f"💰 Сумма: {amount:,} ₽\n"
+                f"💵 Баланс: {balance:,} ₽"
+            ).replace(",", " "),
         )
 
     except Exception:
@@ -700,8 +681,6 @@ async def commission(message: Message):
 
 # =========================================================
 # ОБНУЛИТЬ БАЛАНС
-#
-# /resetbalance ID
 # =========================================================
 
 @dp.message(Command("resetbalance"))
@@ -720,8 +699,7 @@ async def resetbalance(message: Message):
     if len(args) != 2:
 
         await message.answer(
-            "❌ Неверный формат.\n\n"
-            "Использование:\n"
+            "❌ Использование:\n"
             "/resetbalance ID"
         )
 
@@ -739,18 +717,9 @@ async def resetbalance(message: Message):
 
         return
 
-    user = None
+    user = get_user(partner_id)
 
-    users = get_all_users()
-
-    for item in users:
-
-        if item[0] == partner_id:
-
-            user = item
-            break
-
-    if user is None:
+    if not user:
 
         await message.answer(
             "❌ Пользователь не найден."
@@ -772,8 +741,6 @@ async def resetbalance(message: Message):
 
 # =========================================================
 # ОБНУЛИТЬ ВСЕ БАЛАНСЫ
-#
-# /resetall
 # =========================================================
 
 @dp.message(Command("resetall"))
@@ -804,19 +771,16 @@ async def resetall(message: Message):
 
     await message.answer(
         "⚠️ ВСЕ БАЛАНСЫ ОБНУЛЕНЫ\n\n"
-        f"👥 Обработано пользователей: {count}\n"
-        "💰 Балансы: 0 ₽"
+        f"👥 Обработано пользователей: {count}"
     )
 
 
 # =========================================================
-# УДАЛИТЬ ПАРТНЁРА / ПОЛЬЗОВАТЕЛЯ
-#
-# /delete_partner ID
+# УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ / ПАРТНЁРА
 # =========================================================
 
 @dp.message(Command("delete_partner"))
-async def delete_partner_cmd(message: Message):
+async def delete_partner(message: Message):
 
     if not is_admin(message.from_user.id):
 
@@ -831,8 +795,7 @@ async def delete_partner_cmd(message: Message):
     if len(args) != 2:
 
         await message.answer(
-            "❌ Неверный формат.\n\n"
-            "Использование:\n"
+            "❌ Использование:\n"
             "/delete_partner ID"
         )
 
@@ -850,22 +813,12 @@ async def delete_partner_cmd(message: Message):
 
         return
 
-    users = get_all_users()
+    user = get_user(user_id)
 
-    exists = False
-
-    for user in users:
-
-        if user[0] == user_id:
-
-            exists = True
-            break
-
-    if not exists:
+    if not user:
 
         await message.answer(
-            "❌ Пользователь с таким ID "
-            "не найден."
+            "❌ Пользователь не найден."
         )
 
         return
@@ -874,7 +827,8 @@ async def delete_partner_cmd(message: Message):
 
     await message.answer(
         "🗑 ПОЛЬЗОВАТЕЛЬ УДАЛЁН\n\n"
-        f"🆔 ID: {user_id}"
+        f"🆔 ID: {user_id}\n"
+        f"👤 Имя: {user[2]}"
     )
 
 
@@ -922,40 +876,35 @@ async def create_deal_cmd(message: Message):
 
         return
 
-    # Проверяем клиента
+    client = get_user(client_id)
 
-    users = get_all_users()
-
-    client_exists = False
-    partner_exists = False
-
-    for user in users:
-
-        if user[0] == client_id:
-            client_exists = True
-
-        if user[0] == partner_id:
-            partner_exists = True
-
-    if not client_exists:
+    if not client:
 
         await message.answer(
-            "❌ Клиент с таким ID "
-            "не найден в базе."
+            "❌ Клиент не найден в базе."
         )
 
         return
 
-    if not partner_exists:
+    partner = get_user(partner_id)
+
+    if not partner:
 
         await message.answer(
-            "❌ Партнёр с таким ID "
-            "не найден в базе."
+            "❌ Партнёр не найден в базе."
         )
 
         return
 
-    # Создаём сделку
+    if partner[5] != 1:
+
+        await message.answer(
+            "⚠️ Этот пользователь не является партнёром.\n\n"
+            "Сначала используйте:\n"
+            f"/add_partner {partner_id}"
+        )
+
+        return
 
     deal_id = create_deal(
         client_id,
@@ -973,8 +922,6 @@ async def create_deal_cmd(message: Message):
 
 # =========================================================
 # СПИСОК СДЕЛОК
-#
-# /deals
 # =========================================================
 
 @dp.message(Command("deals"))
@@ -1003,17 +950,21 @@ async def deals(message: Message):
     for deal in data:
 
         deal_id = deal[0]
-        client = deal[1]
-        partner = deal[2]
+        client_id = deal[1]
+        partner_id = deal[2]
         status = deal[3]
         commission = deal[4]
 
+        formatted_commission = (
+            f"{commission:,}".replace(",", " ")
+        )
+
         text += (
-            f"🔢 #{deal_id}\n"
-            f"👤 Клиент: {client}\n"
-            f"🤝 Партнёр: {partner}\n"
+            f"🔢 Сделка #{deal_id}\n"
+            f"👤 Клиент: {client_id}\n"
+            f"🤝 Партнёр: {partner_id}\n"
             f"📌 Статус: {status}\n"
-            f"💰 Комиссия: {commission} ₽\n"
+            f"💰 Комиссия: {formatted_commission} ₽\n"
             f"────────────────\n"
         )
 
@@ -1021,7 +972,7 @@ async def deals(message: Message):
 
 
 # =========================================================
-# КНОПКА "СДЕЛКИ"
+# КНОПКА СДЕЛКИ
 # =========================================================
 
 @dp.message(F.text == "🚗 Сделки")
@@ -1082,36 +1033,28 @@ async def done_deal(message: Message):
 
         return
 
-    # Завершаем сделку
-
     partner_id = finish_deal(
         deal_id,
         amount
     )
 
-    if partner_id is None:
+    if not partner_id:
 
         await message.answer(
-            "❌ Сделка с таким ID не найдена."
+            "❌ Сделка не найдена."
         )
 
         return
 
-    # Получаем новый баланс
-
-    new_balance = get_balance(
-        partner_id
-    )
+    balance = get_balance(partner_id)
 
     await message.answer(
         "✅ СДЕЛКА ЗАВЕРШЕНА\n\n"
         f"🔢 Сделка: #{deal_id}\n"
-        f"💰 Начислено: {amount} ₽\n"
-        f"🤝 Партнёр: {partner_id}\n"
-        f"💵 Новый баланс: {new_balance} ₽"
+        f"💰 Начислено: {amount:,} ₽\n"
+        f"💵 Баланс партнёра: {balance:,} ₽\n"
+        f"🤝 Партнёр: {partner_id}".replace(",", " ")
     )
-
-    # Уведомляем партнёра
 
     try:
 
@@ -1119,10 +1062,10 @@ async def done_deal(message: Message):
             chat_id=partner_id,
             text=(
                 "🎉 ПОЗДРАВЛЯЕМ!\n\n"
-                f"Ваша сделка #{deal_id} завершена.\n"
-                f"💰 Начислено: {amount} ₽\n"
-                f"💵 Ваш баланс: {new_balance} ₽"
-            ),
+                f"Ваша сделка #{deal_id} завершена.\n\n"
+                f"💰 Начислено: {amount:,} ₽\n"
+                f"💵 Ваш баланс: {balance:,} ₽"
+            ).replace(",", " "),
         )
 
     except Exception:
@@ -1132,8 +1075,6 @@ async def done_deal(message: Message):
 
 # =========================================================
 # СТАТИСТИКА
-#
-# /stats
 # =========================================================
 
 @dp.message(Command("stats"))
@@ -1148,63 +1089,34 @@ async def stats(message: Message):
         return
 
     users = get_all_users()
-    partners_list = get_partners()
-    deals_list = get_deals()
+    partners_data = get_partners()
+    deals_data = get_deals()
 
     total_balance = 0
-    completed_deals = 0
-    new_deals = 0
-    total_commission = 0
 
     for user in users:
 
         try:
+            total_balance += int(user[2] or 0)
 
-            total_balance += int(
-                user[2] or 0
-            )
-
-        except Exception:
-
+        except (ValueError, TypeError):
             pass
 
-    for deal in deals_list:
-
-        status = deal[3]
-        commission = deal[4] or 0
-
-        if status == "Завершена":
-
-            completed_deals += 1
-
-            try:
-                total_commission += int(
-                    commission
-                )
-            except Exception:
-                pass
-
-        else:
-
-            new_deals += 1
+    formatted_balance = (
+        f"{total_balance:,}".replace(",", " ")
+    )
 
     await message.answer(
         "📊 СТАТИСТИКА\n\n"
-
         f"👥 Пользователей: {len(users)}\n"
-        f"🤝 Партнёров: {len(partners_list)}\n\n"
-
-        f"🚗 Всего сделок: {len(deals_list)}\n"
-        f"🆕 Новых: {new_deals}\n"
-        f"✅ Завершённых: {completed_deals}\n\n"
-
-        f"💰 Всего начислено: {total_commission} ₽\n"
-        f"💵 Балансы пользователей: {total_balance} ₽"
+        f"🤝 Партнёров: {len(partners_data)}\n"
+        f"🚗 Сделок: {len(deals_data)}\n"
+        f"💰 Общий баланс: {formatted_balance} ₽"
     )
 
 
 # =========================================================
-# КНОПКА "СТАТИСТИКА"
+# КНОПКА СТАТИСТИКА
 # =========================================================
 
 @dp.message(F.text == "📊 Статистика")
