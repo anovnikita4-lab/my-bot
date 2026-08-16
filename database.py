@@ -522,3 +522,30 @@ def delete_user(telegram_id):
 
     conn.commit()
     conn.close()
+    
+# =========================
+# СПИСОК ПАРТНЁРОВ
+# =========================
+
+def get_partners():
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT 
+            telegram_id,
+            username,
+            full_name,
+            balance
+        FROM users
+        ORDER BY telegram_id DESC
+        """
+    )
+
+    users = cur.fetchall()
+
+    conn.close()
+
+    return users
