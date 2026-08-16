@@ -101,7 +101,26 @@ def add_user(telegram_id, username, full_name, invited_by=None):
     conn.commit()
     conn.close()
 
+# ==========================
+# ПОЛУЧИТЬ КЛИЕНТОВ ПАРТНЕРА
+# ==========================
 
+def get_clients(partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT telegram_id, username, full_name
+        FROM users
+        WHERE invited_by = ?
+    """, (partner_id,))
+
+    users = cur.fetchall()
+
+    conn.close()
+
+    return users
 
 def get_user(telegram_id):
 
