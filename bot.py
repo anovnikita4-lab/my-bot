@@ -1,4 +1,6 @@
 import asyncio
+import html
+import logging
 import socket
 
 from aiogram import Bot, Dispatcher, F
@@ -39,6 +41,11 @@ from database import (
 
 socket.setdefaulttimeout(30)
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
 init_db()
 
 bot = Bot(token=TOKEN)
@@ -46,11 +53,26 @@ dp = Dispatcher()
 
 
 # =========================================================
-# ПРОВЕРКА АДМИНА
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =========================================================
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
+
+
+def money(amount) -> str:
+    try:
+        return f"{int(amount or 0):,}".replace(",", " ") + " ₽"
+    except (TypeError, ValueError):
+        return "0 ₽"
+
+
+def safe(value) -> str:
+    return html.escape(str(value or ""))
+
+
+def inline_menu(rows):
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # =========================================================
@@ -59,18 +81,10 @@ def is_admin(user_id: int) -> bool:
 
 partner_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [
-            KeyboardButton(text="🔗 Моя ссылка"),
-        ],
-        [
-            KeyboardButton(text="👥 Мои клиенты"),
-        ],
-        [
-            KeyboardButton(text="💰 Мой баланс"),
-        ],
-        [
-            KeyboardButton(text="📜 История"),
-        ],
+        [KeyboardButton(text="🔗 Моя ссылка")],
+        [KeyboardButton(text="👥 Мои клиенты")],
+        [KeyboardButton(text="💰 Мой баланс")],
+        [KeyboardButton(text="📜 История")],
     ],
     resize_keyboard=True,
 )
@@ -86,9 +100,7 @@ admin_reply_kb = ReplyKeyboardMarkup(
             KeyboardButton(text="👥 Партнёры"),
             KeyboardButton(text="🚗 Сделки"),
         ],
-        [
-            KeyboardButton(text="📊 Статистика"),
-        ],
+        [KeyboardButton(text="📊 Статистика")],
     ],
     resize_keyboard=True,
 )
@@ -99,9 +111,7 @@ admin_reply_kb = ReplyKeyboardMarkup(
 # =========================================================
 
 def admin_menu(page: int = 1):
-
     if page == 1:
-
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -128,7 +138,6 @@ def admin_menu(page: int = 1):
         ]
 
     elif page == 2:
-
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -165,7 +174,6 @@ def admin_menu(page: int = 1):
         ]
 
     else:
-
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -199,52 +207,42 @@ def admin_menu(page: int = 1):
             ],
         ]
 
-    return InlineKeyboardMarkup(keyboard=keyboard)
+    return inline_menu(keyboard)
 
 
 # =========================================================
 # СТРАНИЦЫ АДМИНКИ
 # =========================================================
 
-async def show_admin_page(
-    target,
-    page: int,
-):
-
+async def show_admin_page(target, page: int):
     if page == 1:
-
         text = (
             "👑 <b>АДМИН-ПАНЕЛЬ</b>\n\n"
             "Выберите нужный раздел:"
         )
-
     elif page == 2:
-
         text = (
             "👑 <b>УПРАВЛЕНИЕ</b>\n\n"
             "Дополнительные функции:"
         )
-
     else:
-
         text = (
             "⚙️ <b>ДОПОЛНИТЕЛЬНО</b>\n\n"
             "Системные функции:"
         )
 
-    if isinstance(target, CallbackQuery):
+    markup = admin_menu(page)
 
+    if isinstance(target, CallbackQuery):
         await target.message.edit_text(
             text,
-            reply_markup=admin_menu(page),
+            reply_markup=markup,
             parse_mode="HTML",
         )
-
     else:
-
         await target.answer(
             text,
-            reply_markup=admin_menu(page),
+            reply_markup=markup,
             parse_mode="HTML",
         )
 
@@ -255,18 +253,15 @@ async def show_admin_page(
 
 @dp.message(CommandStart())
 async def start(message: Message):
-
     user = message.from_user
 
     if user is None:
         return
 
-    args = message.text.split()
-
+    args = (message.text or "").split()
     invited_by = None
 
     if len(args) > 1:
-
         try:
             invited_by = int(args[1])
         except ValueError:
@@ -279,9 +274,7 @@ async def start(message: Message):
         invited_by=invited_by,
     )
 
-    # Если это админ
     if is_admin(user.id):
-
         await message.answer(
             "👑 <b>Добро пожаловать в админ-панель!</b>\n\n"
             "Используйте кнопки ниже.",
@@ -295,10 +288,8 @@ async def start(message: Message):
             reply_markup=admin_menu(1),
             parse_mode="HTML",
         )
-
         return
 
-    # Обычный пользователь
     await message.answer(
         "🚗 <b>Добро пожаловать в NY Партнёры!</b>\n\n"
         "Здесь можно получать комиссию "
@@ -314,13 +305,8 @@ async def start(message: Message):
 
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
-
     if not is_admin(message.from_user.id):
-
-        await message.answer(
-            "⛔ Доступ запрещён."
-        )
-
+        await message.answer("⛔ Доступ запрещён.")
         return
 
     await message.answer(
@@ -336,56 +322,32 @@ async def admin_panel(message: Message):
 
 @dp.callback_query(F.data == "admin_page_1")
 async def admin_page_1(callback: CallbackQuery):
-
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
-
-    await show_admin_page(
-        callback,
-        1,
-    )
+    await show_admin_page(callback, 1)
 
 
 @dp.callback_query(F.data == "admin_page_2")
 async def admin_page_2(callback: CallbackQuery):
-
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
-
-    await show_admin_page(
-        callback,
-        2,
-    )
+    await show_admin_page(callback, 2)
 
 
 @dp.callback_query(F.data == "admin_page_3")
 async def admin_page_3(callback: CallbackQuery):
-
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
-
-    await show_admin_page(
-        callback,
-        3,
-    )
+    await show_admin_page(callback, 3)
 
 
 # =========================================================
@@ -394,17 +356,13 @@ async def admin_page_3(callback: CallbackQuery):
 
 @dp.message(F.text == "🔗 Моя ссылка")
 async def my_link(message: Message):
-
     me = await bot.get_me()
 
-    link = (
-        f"https://t.me/{me.username}"
-        f"?start={message.from_user.id}"
-    )
+    link = f"https://t.me/{me.username}?start={message.from_user.id}"
 
     await message.answer(
         "🔗 <b>Ваша партнёрская ссылка</b>\n\n"
-        f"{link}\n\n"
+        f"<code>{link}</code>\n\n"
         "Отправляйте её клиентам.",
         parse_mode="HTML",
     )
@@ -416,45 +374,31 @@ async def my_link(message: Message):
 
 @dp.message(F.text == "👥 Мои клиенты")
 async def clients(message: Message):
-
-    users = get_clients(
-        message.from_user.id
-    )
+    users = get_clients(message.from_user.id)
 
     if not users:
-
-        await message.answer(
-            "👥 У вас пока нет клиентов."
-        )
-
+        await message.answer("👥 У вас пока нет клиентов.")
         return
 
     text = "👥 <b>ВАШИ КЛИЕНТЫ</b>\n\n"
 
     for user in users:
-
         telegram_id = user[0]
         username = user[1]
         name = user[2]
 
         if username:
-
             text += (
-                f"👤 @{username}\n"
-                f"🆔 ID: {telegram_id}\n\n"
+                f"👤 @{safe(username)}\n"
+                f"🆔 ID: <code>{telegram_id}</code>\n\n"
             )
-
         else:
-
             text += (
-                f"👤 {name}\n"
-                f"🆔 ID: {telegram_id}\n\n"
+                f"👤 {safe(name)}\n"
+                f"🆔 ID: <code>{telegram_id}</code>\n\n"
             )
 
-    await message.answer(
-        text,
-        parse_mode="HTML",
-    )
+    await message.answer(text, parse_mode="HTML")
 
 
 # =========================================================
@@ -463,14 +407,11 @@ async def clients(message: Message):
 
 @dp.message(F.text == "💰 Мой баланс")
 async def my_balance(message: Message):
-
-    balance = get_balance(
-        message.from_user.id
-    )
+    balance = get_balance(message.from_user.id)
 
     await message.answer(
         "💰 <b>ВАШ БАЛАНС</b>\n\n"
-        f"<b>{balance:,} ₽</b>".replace(",", " "),
+        f"<b>{money(balance)}</b>",
         parse_mode="HTML",
     )
 
@@ -481,33 +422,22 @@ async def my_balance(message: Message):
 
 @dp.message(F.text == "📜 История")
 async def history(message: Message):
-
-    data = get_history(
-        message.from_user.id
-    )
+    data = get_history(message.from_user.id)
 
     if not data:
-
-        await message.answer(
-            "📜 История пока пустая."
-        )
-
+        await message.answer("📜 История пока пустая.")
         return
 
     text = "📜 <b>ИСТОРИЯ НАЧИСЛЕНИЙ</b>\n\n"
 
     for amount, deal_id, date in data:
-
         text += (
             f"🚗 Сделка <b>#{deal_id}</b>\n"
-            f"💰 +{amount:,} ₽\n"
-            f"📅 {date}\n\n"
-        ).replace(",", " ")
+            f"💰 +{money(amount)}\n"
+            f"📅 {safe(date)}\n\n"
+        )
 
-    await message.answer(
-        text,
-        parse_mode="HTML",
-    )
+    await message.answer(text, parse_mode="HTML")
 
 
 # =========================================================
@@ -515,35 +445,30 @@ async def history(message: Message):
 # =========================================================
 
 def partners_keyboard(page: int = 0):
-
     users = get_partners()
-
     per_page = 5
 
     total_pages = max(
         1,
-        (len(users) + per_page - 1) // per_page
+        (len(users) + per_page - 1) // per_page,
     )
 
-    if page >= total_pages:
-        page = total_pages - 1
+    page = max(0, min(page, total_pages - 1))
 
     start = page * per_page
     end = start + per_page
-
     current = users[start:end]
 
     keyboard = []
 
     for user in current:
-
         telegram_id = user[0]
         name = user[2]
 
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=f"👤 {name}",
+                    text=f"👤 {str(name)[:50]}",
                     callback_data=f"partner_view:{telegram_id}",
                 )
             ]
@@ -552,7 +477,6 @@ def partners_keyboard(page: int = 0):
     navigation = []
 
     if page > 0:
-
         navigation.append(
             InlineKeyboardButton(
                 text="◀️",
@@ -568,7 +492,6 @@ def partners_keyboard(page: int = 0):
     )
 
     if page < total_pages - 1:
-
         navigation.append(
             InlineKeyboardButton(
                 text="▶️",
@@ -587,25 +510,18 @@ def partners_keyboard(page: int = 0):
         ]
     )
 
-    return InlineKeyboardMarkup(
-        keyboard=keyboard
-    )
+    return inline_menu(keyboard)
 
 
-async def show_partners(
-    callback: CallbackQuery,
-    page: int = 0,
-):
-
+async def show_partners(callback: CallbackQuery, page: int = 0):
     users = get_partners()
 
     if not users:
-
         await callback.message.edit_text(
             "👥 <b>ПАРТНЁРЫ</b>\n\n"
             "Партнёров пока нет.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
+            reply_markup=inline_menu(
+                [
                     [
                         InlineKeyboardButton(
                             text="🔙 В меню",
@@ -616,7 +532,6 @@ async def show_partners(
             ),
             parse_mode="HTML",
         )
-
         return
 
     await callback.message.edit_text(
@@ -628,86 +543,79 @@ async def show_partners(
 
 
 @dp.callback_query(F.data == "admin_partners")
-async def admin_partners_callback(
-    callback: CallbackQuery,
-):
-
+async def admin_partners_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
-
-    await show_partners(
-        callback,
-        0,
-    )
+    await show_partners(callback, 0)
 
 
 @dp.callback_query(F.data.startswith("partners_page:"))
-async def partners_page(
-    callback: CallbackQuery,
-):
-
+async def partners_page(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    page = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        page = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Ошибка страницы", show_alert=True)
+        return
 
     await callback.answer()
-
-    await show_partners(
-        callback,
-        page,
-    )
+    await show_partners(callback, page)
 
 
 # =========================================================
 # КАРТОЧКА ПАРТНЁРА
 # =========================================================
 
-@dp.callback_query(F.data.startswith("partner_view:"))
-async def partner_view(
-    callback: CallbackQuery,
-):
-
-    if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
-        return
-
-    partner_id = int(
-        callback.data.split(":")[1]
+def partner_card_markup(partner_id: int):
+    return inline_menu(
+        [
+            [
+                InlineKeyboardButton(
+                    text="💰 Начислить",
+                    callback_data=f"commission_partner:{partner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обнулить",
+                    callback_data=f"reset_partner:{partner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="➖ Убрать из партнёров",
+                    callback_data=f"remove_partner:{partner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 К партнёрам",
+                    callback_data="admin_partners",
+                )
+            ],
+        ]
     )
 
+
+async def render_partner_card(callback: CallbackQuery, partner_id: int):
     users = get_partners()
 
-    partner = None
-
-    for user in users:
-
-        if user[0] == partner_id:
-            partner = user
-            break
+    partner = next(
+        (user for user in users if user[0] == partner_id),
+        None,
+    )
 
     if not partner:
-
         await callback.answer(
             "Партнёр не найден",
             show_alert=True,
         )
-
         return
 
     telegram_id = partner[0]
@@ -716,65 +624,45 @@ async def partner_view(
     balance = partner[3]
 
     username_text = (
-        f"@{username}"
+        f"@{safe(username)}"
         if username
         else "не указан"
     )
 
-    clients_list = get_clients(
-        telegram_id
-    )
-
-    history_data = get_history(
-        telegram_id
-    )
+    clients_list = get_clients(telegram_id)
+    history_data = get_history(telegram_id)
 
     text = (
         "👤 <b>КАРТОЧКА ПАРТНЁРА</b>\n\n"
-        f"👤 Имя: <b>{name}</b>\n"
+        f"👤 Имя: <b>{safe(name)}</b>\n"
         f"🆔 ID: <code>{telegram_id}</code>\n"
         f"📱 Username: {username_text}\n"
-        f"💰 Баланс: <b>{balance:,} ₽</b>\n"
+        f"💰 Баланс: <b>{money(balance)}</b>\n"
         f"👥 Клиентов: <b>{len(clients_list)}</b>\n"
         f"📜 Начислений: <b>{len(history_data)}</b>\n"
-    ).replace(",", " ")
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text="💰 Начислить",
-                callback_data=f"commission_partner:{telegram_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔄 Обнулить",
-                callback_data=f"reset_partner:{telegram_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="➖ Убрать из партнёров",
-                callback_data=f"remove_partner:{telegram_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔙 К партнёрам",
-                callback_data="admin_partners",
-            )
-        ],
-    ]
-
-    await callback.answer()
+    )
 
     await callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        ),
+        reply_markup=partner_card_markup(telegram_id),
         parse_mode="HTML",
     )
+
+
+@dp.callback_query(F.data.startswith("partner_view:"))
+async def partner_view(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+
+    try:
+        partner_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
+
+    await callback.answer()
+    await render_partner_card(callback, partner_id)
 
 
 # =========================================================
@@ -782,28 +670,23 @@ async def partner_view(
 # =========================================================
 
 def deals_keyboard(page: int = 0):
-
     data = get_deals()
-
     per_page = 5
 
     total_pages = max(
         1,
-        (len(data) + per_page - 1) // per_page
+        (len(data) + per_page - 1) // per_page,
     )
 
-    if page >= total_pages:
-        page = total_pages - 1
+    page = max(0, min(page, total_pages - 1))
 
     start = page * per_page
     end = start + per_page
-
     current = data[start:end]
 
     keyboard = []
 
     for deal in current:
-
         deal_id = deal[0]
         status = deal[3]
 
@@ -819,7 +702,6 @@ def deals_keyboard(page: int = 0):
     navigation = []
 
     if page > 0:
-
         navigation.append(
             InlineKeyboardButton(
                 text="◀️",
@@ -835,7 +717,6 @@ def deals_keyboard(page: int = 0):
     )
 
     if page < total_pages - 1:
-
         navigation.append(
             InlineKeyboardButton(
                 text="▶️",
@@ -854,25 +735,18 @@ def deals_keyboard(page: int = 0):
         ]
     )
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=keyboard
-    )
+    return inline_menu(keyboard)
 
 
-async def show_deals(
-    callback: CallbackQuery,
-    page: int = 0,
-):
-
+async def show_deals(callback: CallbackQuery, page: int = 0):
     data = get_deals()
 
     if not data:
-
         await callback.message.edit_text(
             "🚗 <b>СДЕЛКИ</b>\n\n"
             "Сделок пока нет.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
+            reply_markup=inline_menu(
+                [
                     [
                         InlineKeyboardButton(
                             text="🔙 В меню",
@@ -883,7 +757,6 @@ async def show_deals(
             ),
             parse_mode="HTML",
         )
-
         return
 
     await callback.message.edit_text(
@@ -895,47 +768,29 @@ async def show_deals(
 
 
 @dp.callback_query(F.data == "admin_deals")
-async def admin_deals_callback(
-    callback: CallbackQuery,
-):
-
+async def admin_deals_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
-
-    await show_deals(
-        callback,
-        0,
-    )
+    await show_deals(callback, 0)
 
 
 @dp.callback_query(F.data.startswith("deals_page:"))
-async def deals_page(
-    callback: CallbackQuery,
-):
-
+async def deals_page(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    page = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        page = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Ошибка страницы", show_alert=True)
+        return
 
     await callback.answer()
-
-    await show_deals(
-        callback,
-        page,
-    )
+    await show_deals(callback, page)
 
 
 # =========================================================
@@ -943,38 +798,29 @@ async def deals_page(
 # =========================================================
 
 @dp.callback_query(F.data.startswith("deal_view:"))
-async def deal_view(
-    callback: CallbackQuery,
-):
-
+async def deal_view(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    deal_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        deal_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Некорректный ID сделки", show_alert=True)
+        return
 
     data = get_deals()
 
-    deal = None
-
-    for item in data:
-
-        if item[0] == deal_id:
-            deal = item
-            break
+    deal = next(
+        (item for item in data if item[0] == deal_id),
+        None,
+    )
 
     if not deal:
-
         await callback.answer(
             "Сделка не найдена",
             show_alert=True,
         )
-
         return
 
     _, client, partner, status, commission = deal
@@ -984,14 +830,13 @@ async def deal_view(
         f"🔢 Номер: <b>#{deal_id}</b>\n"
         f"👤 Клиент: <code>{client}</code>\n"
         f"🤝 Партнёр: <code>{partner}</code>\n"
-        f"📌 Статус: <b>{status}</b>\n"
-        f"💰 Комиссия: <b>{commission:,} ₽</b>"
-    ).replace(",", " ")
+        f"📌 Статус: <b>{safe(status)}</b>\n"
+        f"💰 Комиссия: <b>{money(commission)}</b>"
+    )
 
     keyboard = []
 
     if status != "Завершена":
-
         keyboard.append(
             [
                 InlineKeyboardButton(
@@ -1014,9 +859,7 @@ async def deal_view(
 
     await callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        ),
+        reply_markup=inline_menu(keyboard),
         parse_mode="HTML",
     )
 
@@ -1025,31 +868,23 @@ async def deal_view(
 # СТАТИСТИКА
 # =========================================================
 
-async def show_stats(
-    callback: CallbackQuery,
-):
-
+def build_stats_text():
     users = get_all_users()
     partners = get_partners()
     deals = get_deals()
 
-    total_balance = 0
+    total_balance = sum(
+        int(user[2] or 0)
+        for user in users
+    )
+
     completed = 0
     new_deals = 0
     total_commission = 0
 
-    for user in users:
-
-        total_balance += int(
-            user[2] or 0
-        )
-
     for deal in deals:
-
         status = deal[3]
-        commission = int(
-            deal[4] or 0
-        )
+        commission = int(deal[4] or 0)
 
         total_commission += commission
 
@@ -1058,69 +893,54 @@ async def show_stats(
         else:
             new_deals += 1
 
-    text = (
+    return (
         "📊 <b>СТАТИСТИКА</b>\n\n"
         f"👥 Пользователей: <b>{len(users)}</b>\n"
         f"🤝 Партнёров: <b>{len(partners)}</b>\n\n"
         f"🚗 Сделок: <b>{len(deals)}</b>\n"
         f"✅ Завершено: <b>{completed}</b>\n"
         f"🆕 В работе: <b>{new_deals}</b>\n\n"
-        f"💰 Начислено: <b>{total_commission:,} ₽</b>\n"
-        f"💵 Балансы: <b>{total_balance:,} ₽</b>"
-    ).replace(",", " ")
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 Обновить",
-                    callback_data="admin_stats",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 В меню",
-                    callback_data="admin_page_1",
-                )
-            ],
-        ]
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
+        f"💰 Начислено: <b>{money(total_commission)}</b>\n"
+        f"💵 Балансы: <b>{money(total_balance)}</b>"
     )
 
 
 @dp.callback_query(F.data == "admin_stats")
-async def admin_stats_callback(
-    callback: CallbackQuery,
-):
-
+async def admin_stats_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
 
-    await show_stats(
-        callback
+    await callback.message.edit_text(
+        build_stats_text(),
+        reply_markup=inline_menu(
+            [
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Обновить",
+                        callback_data="admin_stats",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔙 В меню",
+                        callback_data="admin_page_1",
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
     )
 
 
 # =========================================================
-# КНОПКА "ПАРТНЁРЫ" ИЗ REPLY-МЕНЮ
+# КНОПКИ REPLY-МЕНЮ АДМИНА
 # =========================================================
 
 @dp.message(F.text == "👥 Партнёры")
-async def partners_button(
-    message: Message,
-):
-
+async def partners_button(message: Message):
     if not is_admin(message.from_user.id):
         return
 
@@ -1131,15 +951,8 @@ async def partners_button(
     )
 
 
-# =========================================================
-# КНОПКА "СДЕЛКИ" ИЗ REPLY-МЕНЮ
-# =========================================================
-
 @dp.message(F.text == "🚗 Сделки")
-async def deals_button(
-    message: Message,
-):
-
+async def deals_button(message: Message):
     if not is_admin(message.from_user.id):
         return
 
@@ -1150,50 +963,13 @@ async def deals_button(
     )
 
 
-# =========================================================
-# КНОПКА "СТАТИСТИКА"
-# =========================================================
-
 @dp.message(F.text == "📊 Статистика")
-async def stats_button(
-    message: Message,
-):
-
+async def stats_button(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    users = get_all_users()
-    partners = get_partners()
-    deals = get_deals()
-
-    total_balance = sum(
-        int(user[2] or 0)
-        for user in users
-    )
-
-    completed = sum(
-        1
-        for deal in deals
-        if deal[3] == "Завершена"
-    )
-
-    total_commission = sum(
-        int(deal[4] or 0)
-        for deal in deals
-    )
-
-    text = (
-        "📊 <b>СТАТИСТИКА</b>\n\n"
-        f"👥 Пользователей: <b>{len(users)}</b>\n"
-        f"🤝 Партнёров: <b>{len(partners)}</b>\n"
-        f"🚗 Сделок: <b>{len(deals)}</b>\n"
-        f"✅ Завершено: <b>{completed}</b>\n\n"
-        f"💰 Начислено: <b>{total_commission:,} ₽</b>\n"
-        f"💵 Балансы: <b>{total_balance:,} ₽</b>"
-    ).replace(",", " ")
-
     await message.answer(
-        text,
+        build_stats_text(),
         parse_mode="HTML",
     )
 
@@ -1203,15 +979,9 @@ async def stats_button(
 # =========================================================
 
 @dp.callback_query(F.data == "check_database")
-async def check_database(
-    callback: CallbackQuery,
-):
-
+async def check_database(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     users = get_all_users()
@@ -1225,8 +995,8 @@ async def check_database(
         f"👥 Пользователей: <b>{len(users)}</b>\n"
         f"🤝 Партнёров: <b>{len(partners)}</b>\n"
         f"🚗 Сделок: <b>{len(deals)}</b>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔄 Обновить",
@@ -1250,27 +1020,20 @@ async def check_database(
 # =========================================================
 
 @dp.callback_query(F.data == "all_users")
-async def all_users(
-    callback: CallbackQuery,
-):
-
+async def all_users(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     users = get_all_users()
 
     if not users:
-
         await callback.answer()
 
         await callback.message.edit_text(
             "📋 Пользователей нет.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
+            reply_markup=inline_menu(
+                [
                     [
                         InlineKeyboardButton(
                             text="🔙 Назад",
@@ -1280,30 +1043,32 @@ async def all_users(
                 ]
             ),
         )
-
         return
 
     text = "📋 <b>ПОЛЬЗОВАТЕЛИ</b>\n\n"
 
+    # Telegram ограничивает размер сообщения, поэтому показываем максимум 30.
     for user in users[:30]:
-
         telegram_id = user[0]
         name = user[1]
         balance = user[2]
 
         text += (
-            f"👤 {name}\n"
-            f"🆔 {telegram_id}\n"
-            f"💰 {balance:,} ₽\n"
-            f"────────────\n"
-        ).replace(",", " ")
+            f"👤 {safe(name)}\n"
+            f"🆔 <code>{telegram_id}</code>\n"
+            f"💰 {money(balance)}\n"
+            "────────────\n"
+        )
+
+    if len(users) > 30:
+        text += f"\nПоказаны первые 30 из {len(users)} пользователей."
 
     await callback.answer()
 
     await callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔙 Назад",
@@ -1321,15 +1086,9 @@ async def all_users(
 # =========================================================
 
 @dp.callback_query(F.data == "add_partner_help")
-async def add_partner_help(
-    callback: CallbackQuery,
-):
-
+async def add_partner_help(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
@@ -1342,8 +1101,8 @@ async def add_partner_help(
         "<code>/add_partner ID</code>\n\n"
         "Пример:\n"
         "<code>/add_partner 123456789</code>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔙 Назад",
@@ -1357,53 +1116,37 @@ async def add_partner_help(
 
 
 @dp.message(Command("add_partner"))
-async def add_partner_command(
-    message: Message,
-):
-
+async def add_partner_command(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    parts = message.text.split()
+    parts = (message.text or "").split()
 
     if len(parts) != 2:
-
         await message.answer(
             "❌ Использование:\n"
             "/add_partner ID"
         )
-
         return
 
     try:
-
         partner_id = int(parts[1])
-
     except ValueError:
-
-        await message.answer(
-            "❌ ID должен быть числом."
-        )
-
+        await message.answer("❌ ID должен быть числом.")
         return
 
-    changed = add_partner(
-        partner_id
-    )
+    changed = add_partner(partner_id)
 
     if changed == 0:
-
         await message.answer(
             "❌ Пользователь не найден.\n\n"
-            "Пусть сначала откроет бота "
-            "и отправит /start."
+            "Пусть сначала откроет бота и отправит /start."
         )
-
         return
 
     await message.answer(
         "✅ <b>Партнёр добавлен!</b>\n\n"
-        f"🆔 ID: {partner_id}",
+        f"🆔 ID: <code>{partner_id}</code>",
         parse_mode="HTML",
     )
 
@@ -1413,15 +1156,9 @@ async def add_partner_command(
 # =========================================================
 
 @dp.callback_query(F.data == "remove_partner_help")
-async def remove_partner_help(
-    callback: CallbackQuery,
-):
-
+async def remove_partner_help(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
@@ -1431,8 +1168,8 @@ async def remove_partner_help(
         "Партнёра можно убрать прямо из "
         "его карточки.\n\n"
         "История и сделки при этом сохранятся.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="👥 Открыть партнёров",
@@ -1452,45 +1189,29 @@ async def remove_partner_help(
 
 
 @dp.callback_query(F.data.startswith("remove_partner:"))
-async def remove_partner_callback(
-    callback: CallbackQuery,
-):
-
+async def remove_partner_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    partner_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        partner_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
 
-    changed = remove_partner(
-        partner_id
-    )
+    changed = remove_partner(partner_id)
 
     if changed:
-
-        await callback.answer(
-            "Партнёр убран",
-            show_alert=False,
-        )
-
+        await callback.answer("Партнёр убран")
     else:
-
         await callback.answer(
             "Партнёр не найден",
             show_alert=True,
         )
-
         return
 
-    await show_partners(
-        callback,
-        0,
-    )
+    await show_partners(callback, 0)
 
 
 # =========================================================
@@ -1498,20 +1219,16 @@ async def remove_partner_callback(
 # =========================================================
 
 @dp.callback_query(F.data.startswith("commission_partner:"))
-async def commission_partner(
-    callback: CallbackQuery,
-):
-
+async def commission_partner(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    partner_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        partner_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
 
     await callback.answer()
 
@@ -1522,8 +1239,8 @@ async def commission_partner(
         f"<code>/commission {partner_id} СУММА</code>\n\n"
         "Например:\n"
         f"<code>/commission {partner_id} 15000</code>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔙 К партнёру",
@@ -1540,44 +1257,67 @@ async def commission_partner(
 # КОМАНДА КОМИССИИ
 # =========================================================
 
-@dp.message(Command("commission"))
-async def commission(
-    message: Message,
-):
+@dp.callback_query(F.data == "commission_help")
+async def commission_help(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
 
+    await callback.answer()
+
+    await callback.message.edit_text(
+        "💰 <b>НАЧИСЛЕНИЕ КОМИССИИ</b>\n\n"
+        "Используйте команду:\n\n"
+        "<code>/commission ID СУММА</code>\n\n"
+        "Пример:\n"
+        "<code>/commission 123456789 15000</code>",
+        reply_markup=inline_menu(
+            [
+                [
+                    InlineKeyboardButton(
+                        text="👥 Партнёры",
+                        callback_data="admin_partners",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔙 Назад",
+                        callback_data="admin_page_2",
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(Command("commission"))
+async def commission(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    parts = message.text.split()
+    parts = (message.text or "").split()
 
     if len(parts) != 3:
-
         await message.answer(
             "❌ Использование:\n"
             "/commission ID СУММА"
         )
-
         return
 
     try:
-
         partner_id = int(parts[1])
         amount = int(parts[2])
-
     except ValueError:
-
         await message.answer(
             "❌ ID и сумма должны быть числами."
         )
-
         return
 
     if amount <= 0:
-
         await message.answer(
             "❌ Сумма должна быть больше 0."
         )
-
         return
 
     users = get_all_users()
@@ -1588,38 +1328,33 @@ async def commission(
     )
 
     if not exists:
-
-        await message.answer(
-            "❌ Пользователь не найден."
-        )
-
+        await message.answer("❌ Пользователь не найден.")
         return
 
-    add_balance(
-        partner_id,
-        amount
-    )
+    add_balance(partner_id, amount)
 
     await message.answer(
         "✅ <b>КОМИССИЯ НАЧИСЛЕНА</b>\n\n"
         f"👤 Партнёр: <code>{partner_id}</code>\n"
-        f"💰 Сумма: <b>{amount:,} ₽</b>".replace(",", " "),
+        f"💰 Сумма: <b>{money(amount)}</b>",
         parse_mode="HTML",
     )
 
     try:
-
         await bot.send_message(
             chat_id=partner_id,
             text=(
                 "🎉 <b>Вам начислена комиссия!</b>\n\n"
-                f"💰 Сумма: <b>{amount:,} ₽</b>"
-            ).replace(",", " "),
+                f"💰 Сумма: <b>{money(amount)}</b>"
+            ),
             parse_mode="HTML",
         )
-
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(
+            "Не удалось отправить уведомление партнёру %s: %s",
+            partner_id,
+            e,
+        )
 
 
 # =========================================================
@@ -1627,113 +1362,21 @@ async def commission(
 # =========================================================
 
 @dp.callback_query(F.data.startswith("reset_partner:"))
-async def reset_partner(
-    callback: CallbackQuery,
-):
-
+async def reset_partner(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    partner_id = int(
-        callback.data.split(":")[1]
-    )
-
-    set_balance(
-        partner_id,
-        0
-    )
-
-    await callback.answer(
-        "Баланс обнулён",
-        show_alert=False,
-    )
-
-    # Снова открываем карточку
-    users = get_partners()
-
-    partner = None
-
-    for user in users:
-
-        if user[0] == partner_id:
-            partner = user
-            break
-
-    if not partner:
-
-        await show_partners(
-            callback,
-            0,
-        )
-
+    try:
+        partner_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Некорректный ID", show_alert=True)
         return
 
-    telegram_id = partner[0]
-    username = partner[1]
-    name = partner[2]
+    set_balance(partner_id, 0)
 
-    username_text = (
-        f"@{username}"
-        if username
-        else "не указан"
-    )
-
-    clients_list = get_clients(
-        telegram_id
-    )
-
-    history_data = get_history(
-        telegram_id
-    )
-
-    text = (
-        "👤 <b>КАРТОЧКА ПАРТНЁРА</b>\n\n"
-        f"👤 Имя: <b>{name}</b>\n"
-        f"🆔 ID: <code>{telegram_id}</code>\n"
-        f"📱 Username: {username_text}\n"
-        "💰 Баланс: <b>0 ₽</b>\n"
-        f"👥 Клиентов: <b>{len(clients_list)}</b>\n"
-        f"📜 Начислений: <b>{len(history_data)}</b>"
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text="💰 Начислить",
-                callback_data=f"commission_partner:{telegram_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔄 Обнулить",
-                callback_data=f"reset_partner:{telegram_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="➖ Убрать из партнёров",
-                callback_data=f"remove_partner:{telegram_id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔙 К партнёрам",
-                callback_data="admin_partners",
-            )
-        ],
-    ]
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        ),
-        parse_mode="HTML",
-    )
+    await callback.answer("Баланс обнулён")
+    await render_partner_card(callback, partner_id)
 
 
 # =========================================================
@@ -1741,15 +1384,9 @@ async def reset_partner(
 # =========================================================
 
 @dp.callback_query(F.data == "balance_menu")
-async def balance_menu(
-    callback: CallbackQuery,
-):
-
+async def balance_menu(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
@@ -1761,8 +1398,8 @@ async def balance_menu(
         "В карточке партнёра доступны:\n\n"
         "💰 Начислить\n"
         "🔄 Обнулить баланс",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="👥 Партнёры",
@@ -1786,44 +1423,31 @@ async def balance_menu(
 # =========================================================
 
 @dp.message(Command("resetbalance"))
-async def resetbalance(
-    message: Message,
-):
-
+async def resetbalance(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    parts = message.text.split()
+    parts = (message.text or "").split()
 
     if len(parts) != 2:
-
         await message.answer(
             "❌ Использование:\n"
             "/resetbalance ID"
         )
-
         return
 
     try:
-
         partner_id = int(parts[1])
-
     except ValueError:
-
-        await message.answer(
-            "❌ ID должен быть числом."
-        )
-
+        await message.answer("❌ ID должен быть числом.")
         return
 
-    set_balance(
-        partner_id,
-        0
-    )
+    set_balance(partner_id, 0)
 
     await message.answer(
         "✅ Баланс обнулён.\n\n"
-        f"🆔 ID: {partner_id}"
+        f"🆔 ID: <code>{partner_id}</code>",
+        parse_mode="HTML",
     )
 
 
@@ -1832,21 +1456,14 @@ async def resetbalance(
 # =========================================================
 
 @dp.message(Command("resetall"))
-async def resetall(
-    message: Message,
-):
-
+async def resetall(message: Message):
     if not is_admin(message.from_user.id):
         return
 
     users = get_all_users()
 
     for user in users:
-
-        set_balance(
-            user[0],
-            0
-        )
+        set_balance(user[0], 0)
 
     await message.answer(
         "⚠️ <b>Все балансы обнулены.</b>\n\n"
@@ -1860,15 +1477,9 @@ async def resetall(
 # =========================================================
 
 @dp.callback_query(F.data == "create_deal_help")
-async def create_deal_help(
-    callback: CallbackQuery,
-):
-
+async def create_deal_help(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
@@ -1879,8 +1490,8 @@ async def create_deal_help(
         "<code>/deal ID_клиента ID_партнёра</code>\n\n"
         "Пример:\n"
         "<code>/deal 123456789 987654321</code>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔙 Назад",
@@ -1894,40 +1505,29 @@ async def create_deal_help(
 
 
 @dp.message(Command("deal"))
-async def create_deal_command(
-    message: Message,
-):
-
+async def create_deal_command(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    parts = message.text.split()
+    parts = (message.text or "").split()
 
     if len(parts) != 3:
-
         await message.answer(
             "❌ Использование:\n"
             "/deal ID_клиента ID_партнёра"
         )
-
         return
 
     try:
-
         client_id = int(parts[1])
         partner_id = int(parts[2])
-
     except ValueError:
-
-        await message.answer(
-            "❌ ID должны быть числами."
-        )
-
+        await message.answer("❌ ID должны быть числами.")
         return
 
     deal_id = create_deal(
         client_id,
-        partner_id
+        partner_id,
     )
 
     await message.answer(
@@ -1945,20 +1545,16 @@ async def create_deal_command(
 # =========================================================
 
 @dp.callback_query(F.data.startswith("done_help:"))
-async def done_help(
-    callback: CallbackQuery,
-):
-
+async def done_help(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    deal_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
+        deal_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
 
     await callback.answer()
 
@@ -1969,8 +1565,8 @@ async def done_help(
         f"<code>/done {deal_id} СУММА</code>\n\n"
         "Например:\n"
         f"<code>/done {deal_id} 15000</code>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔙 К сделке",
@@ -1988,108 +1584,85 @@ async def done_help(
 # =========================================================
 
 @dp.message(Command("done"))
-async def done_deal(
-    message: Message,
-):
-
+async def done_deal(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    parts = message.text.split()
+    parts = (message.text or "").split()
 
     if len(parts) != 3:
-
         await message.answer(
             "❌ Использование:\n"
             "/done ID_сделки СУММА"
         )
-
         return
 
     try:
-
         deal_id = int(parts[1])
         amount = int(parts[2])
-
     except ValueError:
-
         await message.answer(
             "❌ ID и сумма должны быть числами."
         )
-
         return
 
     if amount <= 0:
-
         await message.answer(
             "❌ Сумма должна быть больше 0."
         )
-
         return
 
-    # Проверяем, не завершена ли сделка
     deals = get_deals()
 
-    selected_deal = None
-
-    for deal in deals:
-
-        if deal[0] == deal_id:
-            selected_deal = deal
-            break
+    selected_deal = next(
+        (deal for deal in deals if deal[0] == deal_id),
+        None,
+    )
 
     if not selected_deal:
-
-        await message.answer(
-            "❌ Сделка не найдена."
-        )
-
+        await message.answer("❌ Сделка не найдена.")
         return
 
     if selected_deal[3] == "Завершена":
-
         await message.answer(
             "⚠️ Эта сделка уже завершена.\n\n"
             "Повторное начисление запрещено."
         )
-
         return
 
     partner_id = finish_deal(
         deal_id,
-        amount
+        amount,
     )
 
     if not partner_id:
-
-        await message.answer(
-            "❌ Сделка не найдена."
-        )
-
+        await message.answer("❌ Сделка не найдена.")
         return
 
     await message.answer(
         "✅ <b>СДЕЛКА ЗАВЕРШЕНА</b>\n\n"
         f"🔢 Сделка: <b>#{deal_id}</b>\n"
-        f"💰 Начислено: <b>{amount:,} ₽</b>\n"
-        f"🤝 Партнёр: <code>{partner_id}</code>".replace(",", " "),
+        f"💰 Начислено: <b>{money(amount)}</b>\n"
+        f"🤝 Партнёр: <code>{partner_id}</code>",
         parse_mode="HTML",
     )
 
     try:
-
         await bot.send_message(
             chat_id=partner_id,
             text=(
                 "🎉 <b>Поздравляем!</b>\n\n"
                 f"Ваша сделка <b>#{deal_id}</b> завершена.\n"
-                f"💰 Начислено: <b>{amount:,} ₽</b>"
-            ).replace(",", " "),
+                f"💰 Начислено: <b>{money(amount)}</b>"
+            ),
             parse_mode="HTML",
         )
-
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(
+            "Не удалось отправить уведомление партнёру %s: %s",
+            partner_id,
+            e,
+        )
 
 
 # =========================================================
@@ -2097,15 +1670,9 @@ async def done_deal(
 # =========================================================
 
 @dp.callback_query(F.data == "delete_user_help")
-async def delete_user_help(
-    callback: CallbackQuery,
-):
-
+async def delete_user_help(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Нет доступа",
-            show_alert=True,
-        )
+        await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     await callback.answer()
@@ -2116,8 +1683,8 @@ async def delete_user_help(
         "<code>/delete_partner ID</code>\n\n"
         "⚠️ Внимание: эта команда полностью удаляет "
         "пользователя из таблицы users.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
+        reply_markup=inline_menu(
+            [
                 [
                     InlineKeyboardButton(
                         text="🔙 Назад",
@@ -2131,53 +1698,35 @@ async def delete_user_help(
 
 
 @dp.message(Command("delete_partner"))
-async def delete_partner(
-    message: Message,
-):
-
+async def delete_partner_command(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    parts = message.text.split()
+    parts = (message.text or "").split()
 
     if len(parts) != 2:
-
         await message.answer(
             "❌ Использование:\n"
             "/delete_partner ID"
         )
-
         return
 
     try:
-
         user_id = int(parts[1])
-
     except ValueError:
-
-        await message.answer(
-            "❌ ID должен быть числом."
-        )
-
+        await message.answer("❌ ID должен быть числом.")
         return
 
-    deleted = delete_user(
-        user_id
-    )
+    deleted = delete_user(user_id)
 
     if deleted:
-
         await message.answer(
             "🗑 <b>Пользователь удалён.</b>\n\n"
-            f"🆔 ID: {user_id}",
+            f"🆔 ID: <code>{user_id}</code>",
             parse_mode="HTML",
         )
-
     else:
-
-        await message.answer(
-            "❌ Пользователь не найден."
-        )
+        await message.answer("❌ Пользователь не найден.")
 
 
 # =========================================================
@@ -2185,45 +1734,37 @@ async def delete_partner(
 # =========================================================
 
 @dp.message(Command("partners"))
-async def partners_command(
-    message: Message,
-):
-
+async def partners_command(message: Message):
     if not is_admin(message.from_user.id):
         return
 
     users = get_partners()
 
     if not users:
-
-        await message.answer(
-            "👥 Партнёров пока нет."
-        )
-
+        await message.answer("👥 Партнёров пока нет.")
         return
 
     text = "👥 <b>ПАРТНЁРЫ</b>\n\n"
 
     for user in users:
-
         telegram_id = user[0]
         username = user[1]
         name = user[2]
         balance = user[3]
 
         username_text = (
-            f"@{username}"
+            f"@{safe(username)}"
             if username
             else "не указан"
         )
 
         text += (
-            f"👤 <b>{name}</b>\n"
-            f"🆔 {telegram_id}\n"
+            f"👤 <b>{safe(name)}</b>\n"
+            f"🆔 <code>{telegram_id}</code>\n"
             f"📱 {username_text}\n"
-            f"💰 {balance:,} ₽\n"
+            f"💰 {money(balance)}\n"
             "────────────\n"
-        ).replace(",", " ")
+        )
 
     await message.answer(
         text,
@@ -2236,10 +1777,7 @@ async def partners_command(
 # =========================================================
 
 @dp.message(Command("checkdb"))
-async def checkdb(
-    message: Message,
-):
-
+async def checkdb(message: Message):
     if not is_admin(message.from_user.id):
         return
 
@@ -2261,10 +1799,7 @@ async def checkdb(
 # =========================================================
 
 @dp.callback_query(F.data == "noop")
-async def noop(
-    callback: CallbackQuery,
-):
-
+async def noop(callback: CallbackQuery):
     await callback.answer()
 
 
@@ -2273,21 +1808,15 @@ async def noop(
 # =========================================================
 
 @dp.message()
-async def other_message(
-    message: Message,
-):
-
+async def other_message(message: Message):
     if is_admin(message.from_user.id):
-
         await message.answer(
             "👑 <b>АДМИН-ПАНЕЛЬ</b>\n\n"
             "Используйте кнопки ниже.",
             reply_markup=admin_reply_kb,
             parse_mode="HTML",
         )
-
     else:
-
         await message.answer(
             "Используйте кнопки меню ниже.",
             reply_markup=partner_kb,
@@ -2299,12 +1828,8 @@ async def other_message(
 # =========================================================
 
 async def main():
-
     print("Бот запущен...")
-
-    await dp.start_polling(
-        bot
-    )
+    await dp.start_polling(bot)
 
 
 # =========================================================
@@ -2312,5 +1837,4 @@ async def main():
 # =========================================================
 
 if __name__ == "__main__":
-
     asyncio.run(main())
