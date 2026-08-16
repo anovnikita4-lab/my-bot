@@ -16,6 +16,7 @@ from database import (
     get_balance,
     get_history,
     get_clients,
+    delete_user,
 )
 
 
