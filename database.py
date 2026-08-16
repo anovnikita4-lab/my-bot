@@ -100,7 +100,23 @@ def add_user(telegram_id, username, full_name, invited_by=None):
 
     conn.commit()
     conn.close()
+    
+def delete_user(telegram_id):
 
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        DELETE FROM users
+        WHERE telegram_id = ?
+        """,
+        (telegram_id,)
+    )
+
+    conn.commit()
+    conn.close()
+    
 # ==========================
 # ПОЛУЧИТЬ КЛИЕНТОВ ПАРТНЕРА
 # ==========================
