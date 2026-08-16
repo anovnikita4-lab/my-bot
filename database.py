@@ -565,3 +565,25 @@ def get_partners():
     conn.close()
 
     return users
+    
+def get_partners():
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT 
+            telegram_id,
+            username,
+            full_name,
+            balance
+        FROM users
+        """
+    )
+
+    users = cur.fetchall()
+
+    conn.close()
+
+    return users
