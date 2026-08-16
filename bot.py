@@ -191,33 +191,33 @@ async def my_balance(message: Message):
 # =========================
 
 
-@dp.message(
-    F.text == "👥 Мои клиенты"
-)
-async def my_clients(message: Message):
+@dp.message(F.text == "👥 Мои клиенты")
+async def clients(message: Message):
 
-    clients = get_clients(
-        message.from_user.id
-    )
+    users = get_clients(message.from_user.id)
 
 
-    if not clients:
-
+    if not users:
         await message.answer(
-            "У вас пока нет клиентов."
+            "👥 У вас пока нет клиентов."
         )
-
         return
 
 
     text = "👥 Ваши клиенты:\n\n"
 
 
-    for client in clients:
+    for user in users:
 
-        text += (
-            f"ID клиента: {client[0]}\n"
-        )
+        telegram_id = user[0]
+        username = user[1]
+        name = user[2]
+
+
+        if username:
+            text += f"👤 @{username}\n"
+        else:
+            text += f"👤 {name}\n"
 
 
     await message.answer(text)
