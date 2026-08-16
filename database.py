@@ -502,3 +502,23 @@ def get_history(partner_id):
     conn.close()
 
     return data
+    
+# =========================
+# УДАЛЕНИЕ ПАРТНЕРА
+# =========================
+
+def delete_user(telegram_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        DELETE FROM users
+        WHERE telegram_id = ?
+        """,
+        (telegram_id,)
+    )
+
+    conn.commit()
+    conn.close()
