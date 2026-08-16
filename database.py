@@ -153,6 +153,16 @@ def is_partner(telegram_id):
     user = get_user(telegram_id)
     return bool(user and user["is_partner"])
 
+def remove_partner(telegram_id):
+    """Remove partner status but keep existing client/deal attribution."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET is_partner=0 WHERE telegram_id=?", (telegram_id,))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return changed
+
 def get_partners():
     conn = get_connection()
     rows = conn.execute("""
