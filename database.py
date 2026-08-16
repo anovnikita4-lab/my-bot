@@ -38,6 +38,20 @@ def init_db():
     """)
 
     # =========================
+    # ЕСЛИ СТАРАЯ БАЗА
+    # ДОБАВЛЯЕМ is_partner
+    # =========================
+
+    try:
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN is_partner INTEGER DEFAULT 0
+        """)
+    except sqlite3.OperationalError:
+        # Колонка уже существует
+        pass
+
+    # =========================
     # КЛИЕНТЫ
     # =========================
 
@@ -81,20 +95,6 @@ def init_db():
         )
     """)
 
-    # =========================
-    # ЕСЛИ СТАРАЯ БАЗА
-    # ДОБАВЛЯЕМ is_partner
-    # =========================
-
-    try:
-        cur.execute("""
-            ALTER TABLE users
-            ADD COLUMN is_partner INTEGER DEFAULT 0
-        """)
-    except sqlite3.OperationalError:
-        # Колонка уже существует
-        pass
-
     conn.commit()
     conn.close()
 
@@ -113,15 +113,35 @@ def add_user(
     conn = connect()
     cur = conn.cursor()
 
+    # Создаём пользователя.
+    # Если он уже существует:
+    # обновляем username и имя.
+    #
+    # invited_by записываем только если
+    # раньше он был пустым.
+    #
+    # Это важно для партнёрских ссылок.
+
     cur.execute("""
-        INSERT OR IGNORE INTO users
-        (
+        INSERT INTO users (
             telegram_id,
             username,
             full_name,
             invited_by
         )
         VALUES (?, ?, ?, ?)
+
+        ON CONFLICT(telegram_id)
+        DO UPDATE SET
+            username = excluded.username,
+            full_name = excluded.full_name,
+            invited_by = CASE
+                WHEN users.invited_by IS NULL
+                     AND excluded.invited_by IS NOT NULL
+                     AND excluded.invited_by != users.telegram_id
+                THEN excluded.invited_by
+                ELSE users.invited_by
+            END
     """, (
         telegram_id,
         username,
@@ -170,25 +190,35 @@ def delete_user(telegram_id):
     conn = connect()
     cur = conn.cursor()
 
+    # Проверяем, существует ли пользователь
+    cur.execute("""
+        SELECT telegram_id
+        FROM users
+        WHERE telegram_id = ?
+    """, (telegram_id,))
+
+    user = cur.fetchone()
+
+    if not user:
+        conn.close()
+        return 0
+
     # Удаляем пользователя
     cur.execute("""
         DELETE FROM users
         WHERE telegram_id = ?
     """, (telegram_id,))
 
-    # Заодно удаляем его клиентов
+    # Удаляем клиентов этого партнёра
     cur.execute("""
         DELETE FROM clients
         WHERE partner_id = ?
     """, (telegram_id,))
 
     conn.commit()
-
-    deleted = cur.rowcount
-
     conn.close()
 
-    return deleted
+    return 1
 
 
 # =========================
@@ -295,8 +325,7 @@ def add_client(client_id, partner_id):
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT OR IGNORE INTO clients
-        (
+        INSERT OR IGNORE INTO clients (
             telegram_id,
             partner_id,
             created_at
@@ -348,8 +377,7 @@ def create_deal(client_id, partner_id):
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO deals
-        (
+        INSERT INTO deals (
             client_id,
             partner_id,
             status,
@@ -429,7 +457,7 @@ def finish_deal(deal_id, amount):
     conn = connect()
     cur = conn.cursor()
 
-    # Находим партнера
+    # Находим партнёра
     cur.execute("""
         SELECT partner_id
         FROM deals
@@ -443,6 +471,23 @@ def finish_deal(deal_id, amount):
         return None
 
     partner_id = deal[0]
+
+    # Проверяем, не завершена ли сделка раньше
+    cur.execute("""
+        SELECT status
+        FROM deals
+        WHERE id = ?
+    """, (deal_id,))
+
+    current_deal = cur.fetchone()
+
+    if not current_deal:
+        conn.close()
+        return None
+
+    if current_deal[0] == "Завершена":
+        conn.close()
+        return None
 
     # Закрываем сделку
     cur.execute("""
@@ -458,7 +503,7 @@ def finish_deal(deal_id, amount):
         deal_id
     ))
 
-    # Начисляем партнеру
+    # Начисляем партнёру
     cur.execute("""
         UPDATE users
         SET balance = balance + ?
@@ -470,8 +515,7 @@ def finish_deal(deal_id, amount):
 
     # Записываем историю
     cur.execute("""
-        INSERT INTO transactions
-        (
+        INSERT INTO transactions (
             partner_id,
             amount,
             deal_id,
