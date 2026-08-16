@@ -644,3 +644,42 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+    
+# =========================
+# УДАЛЕНИЕ ПАРТНЕРА
+# =========================
+
+@dp.message(Command("delete_partner"))
+async def delete_partner(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        await message.answer(
+            "⛔ Нет доступа"
+        )
+        return
+
+    args = message.text.split()
+
+    if len(args) < 2:
+        await message.answer(
+            "Использование:\n"
+            "/delete_partner ID"
+        )
+        return
+
+    try:
+        user_id = int(args[1])
+
+    except:
+        await message.answer(
+            "❌ ID должен быть числом"
+        )
+        return
+
+
+    delete_user(user_id)
+
+
+    await message.answer(
+        f"✅ Партнёр {user_id} удалён"
+    )
