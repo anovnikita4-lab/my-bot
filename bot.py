@@ -164,7 +164,31 @@ async def notify_partner(partner_id, text):
     except Exception:
         logging.exception("Cannot notify partner %s", partner_id)
 
-def request_summary(data):
+def telegram_link(user_id: int, full_name: str = "Клиент") -> str:
+    """Clickable Telegram profile link that works even without @username."""
+    name = html.escape(full_name or "Клиент")
+    return f'<a href="tg://user?id={int(user_id)}">{name}</a>'
+
+def contact_display(user_id: int, username: str | None, full_name: str, preference: str) -> str:
+    """Show the selected contact method plus a direct Telegram link."""
+    tg = telegram_link(user_id, full_name)
+    username_text = f' (@{html.escape(username)})' if username else ''
+    preference = str(preference or "—")
+    if preference.lower() in {"только telegram", "⏭ только telegram"}:
+        return f"{tg}{username_text}"
+    return f"{html.escape(preference)} | Telegram: {tg}{username_text}"
+
+def request_summary(data, client_user=None):
+    if client_user:
+        contact = contact_display(
+            client_user["telegram_id"],
+            client_user.get("username"),
+            client_user.get("full_name") or "Клиент",
+            data.get("contact", "—"),
+        )
+    else:
+        contact = html.escape(str(data.get("contact", "—")))
+
     return (
         "🚗 <b>ЗАЯВКА НА АВТО</b>\n\n"
         f"🌍 Страна: <b>{html.escape(str(data.get('country','—')))}</b>\n"
@@ -176,7 +200,7 @@ def request_summary(data):
         f"💳 Оплата: <b>{html.escape(str(data.get('payment','—')))}</b>\n"
         f"⏱ Срок: <b>{html.escape(str(data.get('timing','—')))}</b>\n"
         f"📝 Дополнительно: <b>{html.escape(str(data.get('additional','—')))}</b>\n"
-        f"📞 Контакт: <b>{html.escape(str(data.get('contact','—')))}</b>"
+        f"📞 Контакт: {contact}"
     )
 
 async def start_car_request(message, state):
@@ -401,14 +425,25 @@ async def request_confirm(callback: CallbackQuery, state: FSMContext):
         f"👤 Клиент: <b>{html.escape(client_name)}</b>\n"
         f"🆔 <code>{client_id}</code>\n"
         f"🤝 Партнёр: <b>{html.escape(partner_name)}</b>\n\n"
-        + request_summary(data)
+        + request_summary(data, client_user)
     )
-    await notify_admin(text)
+    contact_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Написать клиенту", url=f"tg://user?id={client_id}")]
+    ])
+    try:
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML", reply_markup=contact_kb)
+    except Exception:
+        logging.exception("Cannot notify admin")
     if partner_id:
-        await notify_partner(
-            partner_id,
-            f"🆕 <b>Новая заявка вашего клиента #{request_id}</b>\n\n" + request_summary(data)
-        )
+        try:
+            await bot.send_message(
+                partner_id,
+                f"🆕 <b>Новая заявка вашего клиента #{request_id}</b>\n\n" + request_summary(data, client_user),
+                parse_mode="HTML",
+                reply_markup=contact_kb,
+            )
+        except Exception:
+            logging.exception("Cannot notify partner %s", partner_id)
 
 @dp.message(F.text == "📋 Моя заявка")
 async def my_request(message: Message):
