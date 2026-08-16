@@ -17,6 +17,7 @@ from database import (
     get_history,
     get_clients,
     delete_user,
+    get_partners,
 )
 
 
@@ -135,7 +136,44 @@ async def start(message: Message):
         reply_markup=partner_kb
     )
 
+# =========================
+# АДМИН: СПИСОК ПАРТНЁРОВ
+# =========================
 
+@dp.message(Command("partners"))
+async def partners(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        await message.answer(
+            "⛔ У вас нет доступа"
+        )
+        return
+
+    users = get_partners()
+
+    if not users:
+        await message.answer(
+            "Партнёров пока нет."
+        )
+        return
+
+    text = "👥 Партнёры:\n\n"
+
+    for user in users:
+
+        telegram_id = user[0]
+        username = user[1]
+        name = user[2]
+        balance = user[3]
+
+        text += (
+            f"👤 {name}\n"
+            f"ID: {telegram_id}\n"
+            f"Username: @{username}\n"
+            f"💰 Баланс: {balance} ₽\n\n"
+        )
+
+    await message.answer(text)
 
 # =========================
 # МОЯ ССЫЛКА
