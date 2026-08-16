@@ -19,6 +19,8 @@ from database import (
     delete_user,
     get_partners,
     get_all_users
+    add_partner,
+    remove_partner,
 )
 
 
