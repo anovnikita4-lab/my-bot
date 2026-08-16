@@ -566,7 +566,35 @@ async def deals_button(message: Message):
 # ЗАПУСК
 # =========================
 
+@dp.message(Command("delete_partner"))
+async def delete_partner(message: Message):
 
+    # проверяем, что пишет именно админ
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    # разбиваем сообщение
+    args = message.text.split()
+
+    # если ID не указан
+    if len(args) < 2:
+        await message.answer(
+            "❌ Укажите ID партнёра\n\n"
+            "Пример:\n"
+            "/delete_partner 123456789"
+        )
+        return
+
+    # берём ID из команды
+    user_id = int(args[1])
+
+    # удаляем из базы
+    delete_user(user_id)
+
+    await message.answer(
+        f"✅ Партнёр {user_id} удалён"
+    )
+    
 async def main():
 
     print("Бот запущен...")
