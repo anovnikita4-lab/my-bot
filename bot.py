@@ -28,6 +28,7 @@ from database import (
     set_balance,
     get_all_users,
     set_partner,
+    remove_partner,
     is_partner,
     attach_client_to_partner,
     get_client,
@@ -87,7 +88,7 @@ main_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🚗 Подобрать автомобиль")],
         [KeyboardButton(text="📋 Моя заявка"), KeyboardButton(text="🤝 Стать партнёром")],
-        [KeyboardButton(text="🔗 Моя ссылка"), KeyboardButton(text="💰 Баланс")],
+        [KeyboardButton(text="📖 Как это работает"), KeyboardButton(text="💰 Баланс")],
         [KeyboardButton(text="📞 Поддержка")],
     ],
     resize_keyboard=True,
@@ -100,6 +101,7 @@ partner_kb = ReplyKeyboardMarkup(
         [KeyboardButton(text="🔗 Моя ссылка")],
         [KeyboardButton(text="💰 Мой баланс")],
         [KeyboardButton(text="📜 История")],
+        [KeyboardButton(text="❌ Разорвать партнёрство")],
         [KeyboardButton(text="🏠 Главное меню")],
     ],
     resize_keyboard=True,
@@ -263,7 +265,14 @@ async def start(message: Message, state: FSMContext):
     else:
         await message.answer(
             "🚗 <b>Добро пожаловать в NY!</b>\n\n"
-            "Помогу оформить заявку на подбор автомобиля из Японии, Китая или Кореи.",
+            "<b>Хороший автомобиль начинается с правильного подбора — расскажите, что хотите, а мы поможем найти ваш вариант.</b>\n\n"
+            "📌 <b>Как пользоваться ботом:</b>\n"
+            "1. Нажмите «🚗 Подобрать автомобиль».\n"
+            "2. Выберите Японию, Китай или Корею.\n"
+            "3. Ответьте на короткие вопросы и укажите свои пожелания.\n"
+            "4. Проверьте заявку и нажмите «✅ Всё верно».\n"
+            "5. Менеджер получает заявку и связывается с вами.\n\n"
+            "🤝 Хотите рекомендовать клиентов и получать комиссию? Нажмите «🤝 Стать партнёром».",
             reply_markup=main_kb,
             parse_mode="HTML",
         )
@@ -460,14 +469,68 @@ async def my_request(message: Message):
 
 @dp.message(F.text == "🤝 Стать партнёром")
 async def become_partner(message: Message):
+    if is_partner(message.from_user.id):
+        await message.answer(
+            "🤝 <b>Вы уже являетесь партнёром NY.</b>\n\n"
+            "Ваша партнёрская ссылка доступна в разделе «🔗 Моя ссылка».\n"
+            "Если хотите прекратить партнёрство, используйте кнопку «❌ Разорвать партнёрство».",
+            reply_markup=partner_kb,
+            parse_mode="HTML",
+        )
+        return
+
     set_partner(message.from_user.id, True)
+    me = await bot.get_me()
+    link = f"https://t.me/{me.username}?start={message.from_user.id}"
     await message.answer(
-        "🤝 <b>Вы стали партнёром NY.</b>\n\n"
-        "Ваша ссылка уже готова. Отправляйте её клиентам — "
-        "после /start клиент автоматически закрепится за вами.",
+        "🤝 <b>Партнёрство активировано!</b>\n\n"
+        "Теперь вы можете приглашать клиентов своей ссылкой.\n"
+        "Когда новый клиент впервые откроет бота по вашей ссылке и нажмёт /start, он автоматически закрепится за вами.\n\n"
+        f"🔗 <b>Ваша ссылка:</b>\n<code>{link}</code>",
         reply_markup=partner_kb,
         parse_mode="HTML",
     )
+
+@dp.message(F.text == "❌ Разорвать партнёрство")
+async def break_partnership(message: Message):
+    if not is_partner(message.from_user.id):
+        await message.answer(
+            "ℹ️ Вы сейчас не являетесь партнёром.",
+            reply_markup=main_kb,
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚠️ Да, разорвать", callback_data="partner_break_confirm"),
+            InlineKeyboardButton(text="↩️ Отмена", callback_data="partner_break_cancel"),
+        ]
+    ])
+    await message.answer(
+        "⚠️ <b>Разорвать партнёрство?</b>\n\n"
+        "Партнёрская ссылка перестанет работать для новых клиентов, а вы больше не сможете получать новых клиентов по реферальной системе.\n\n"
+        "Уже закреплённые клиенты, заявки, сделки и история комиссий сохранятся.",
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+
+@dp.callback_query(F.data == "partner_break_cancel")
+async def partner_break_cancel(callback: CallbackQuery):
+    await callback.answer("Партнёрство сохранено")
+    await callback.message.edit_text("↩️ Партнёрство не изменено.")
+
+@dp.callback_query(F.data == "partner_break_confirm")
+async def partner_break_confirm(callback: CallbackQuery):
+    remove_partner(callback.from_user.id)
+    await callback.answer("Партнёрство прекращено")
+    await callback.message.edit_text(
+        "❌ <b>Партнёрство прекращено.</b>\n\n"
+        "Ваши старые клиенты, заявки, сделки и история комиссий сохранены.\n"
+        "Новые клиенты по вашей партнёрской ссылке больше закрепляться не будут.\n\n"
+        "Если захотите вернуться в программу, нажмите «🤝 Стать партнёром».",
+        parse_mode="HTML",
+    )
+    await callback.message.answer("Главное меню", reply_markup=main_kb)
 
 @dp.message(F.text.in_({"🔗 Моя ссылка"}))
 async def mylink(message: Message):
@@ -556,6 +619,23 @@ async def history(message: Message):
 @dp.message(F.text == "🏠 Главное меню")
 async def home(message: Message):
     await message.answer("Главное меню.", reply_markup=partner_kb if is_partner(message.from_user.id) else main_kb)
+
+@dp.message(F.text == "📖 Как это работает")
+async def how_it_works(message: Message):
+    await message.answer(
+        "📖 <b>КАК ПОЛЬЗОВАТЬСЯ БОТОМ</b>\n\n"
+        "🚗 <b>1. Подбор автомобиля</b>\n"
+        "Выберите страну и ответьте на вопросы: автомобиль, бюджет, год, пробег, двигатель, оплата, сроки и дополнительные требования.\n\n"
+        "📋 <b>2. Заявка</b>\n"
+        "Перед отправкой вы увидите все данные и сможете исправить их. После подтверждения заявка передаётся менеджеру.\n\n"
+        "🤝 <b>3. Если вы пришли по партнёрской ссылке</b>\n"
+        "Заявка автоматически закрепляется за пригласившим партнёром.\n\n"
+        "💬 <b>4. Связь</b>\n"
+        "Можно оставить телефон или выбрать «Только Telegram».\n\n"
+        "🚘 <b>5. Дальше</b>\n"
+        "Менеджер изучает запрос, проверяет варианты и связывается с вами.",
+        parse_mode="HTML",
+    )
 
 @dp.message(F.text == "📞 Поддержка")
 async def support(message: Message):
