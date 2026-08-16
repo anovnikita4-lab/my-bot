@@ -482,6 +482,21 @@ def get_history(partner_id):
 
 
     data = cur.fetchall()
+    
+    def delete_user(telegram_id):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        DELETE FROM users
+        WHERE telegram_id = ?
+        """,
+        (telegram_id,)
+    )
+
+    conn.commit()
+    conn.close()
 
     conn.close()
 
