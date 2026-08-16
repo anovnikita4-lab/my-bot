@@ -47,8 +47,7 @@ def init_db():
             full_name TEXT,
             balance INTEGER DEFAULT 0,
             invited_by INTEGER DEFAULT NULL,
-            is_partner INTEGER DEFAULT 0,
-            created_at TEXT
+            is_partner INTEGER DEFAULT 0
         )
     """)
 
@@ -82,39 +81,6 @@ def init_db():
     """)
 
     # =====================================================
-    # ЗАЯВКИ НА АВТО
-    # =====================================================
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS car_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            client_id INTEGER UNIQUE,
-            partner_id INTEGER,
-            deal_id INTEGER,
-
-            country TEXT,
-            budget TEXT,
-            brand_model TEXT,
-            year_from TEXT,
-            year_to TEXT,
-            power TEXT,
-            fuel TEXT,
-            body TEXT,
-            gearbox TEXT,
-            drive TEXT,
-            mileage TEXT,
-            color TEXT,
-            additional TEXT,
-
-            status TEXT DEFAULT 'Заполняется',
-
-            created_at TEXT,
-            updated_at TEXT
-        )
-    """)
-
-    # =====================================================
     # TRANSACTIONS
     # =====================================================
 
@@ -130,7 +96,43 @@ def init_db():
     """)
 
     # =====================================================
-    # ПРОВЕРКА СТАРОЙ БАЗЫ
+    # ЗАЯВКИ НА АВТОМОБИЛИ
+    # =====================================================
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS car_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            client_id INTEGER UNIQUE,
+            deal_id INTEGER,
+
+            country TEXT,
+            car_type TEXT,
+
+            brand TEXT,
+            model TEXT,
+
+            budget TEXT,
+            year_from TEXT,
+            mileage TEXT,
+
+            engine TEXT,
+            fuel TEXT,
+            drive TEXT,
+            body TEXT,
+
+            additional TEXT,
+            free_text TEXT,
+
+            status TEXT DEFAULT 'Новая',
+
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+
+    # =====================================================
+    # ПРОВЕРКА СТАРОЙ БАЗЫ USERS
     # =====================================================
 
     cur.execute("PRAGMA table_info(users)")
@@ -166,12 +168,22 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-    if "created_at" not in user_columns:
+    if "username" not in user_columns:
 
         try:
             cur.execute("""
                 ALTER TABLE users
-                ADD COLUMN created_at TEXT
+                ADD COLUMN username TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass
+
+    if "full_name" not in user_columns:
+
+        try:
+            cur.execute("""
+                ALTER TABLE users
+                ADD COLUMN full_name TEXT
             """)
         except sqlite3.OperationalError:
             pass
@@ -183,6 +195,11 @@ def init_db():
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_users_invited_by
         ON users(invited_by)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_users_partner
+        ON users(is_partner)
     """)
 
     cur.execute("""
@@ -201,13 +218,28 @@ def init_db():
     """)
 
     cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_deals_status
+        ON deals(status)
+    """)
+
+    cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_transactions_partner
         ON transactions(partner_id)
     """)
 
     cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_requests_partner
-        ON car_requests(partner_id)
+        CREATE INDEX IF NOT EXISTS idx_car_requests_client
+        ON car_requests(client_id)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_car_requests_deal
+        ON car_requests(deal_id)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_car_requests_status
+        ON car_requests(status)
     """)
 
     conn.commit()
@@ -227,6 +259,13 @@ def add_user(
 
     conn = connect()
     cur = conn.cursor()
+
+    # -----------------------------------------------------
+    # Нельзя пригласить самого себя
+    # -----------------------------------------------------
+
+    if invited_by == telegram_id:
+        invited_by = None
 
     # -----------------------------------------------------
     # Проверяем пользователя
@@ -249,27 +288,22 @@ def add_user(
 
     if not existing:
 
-        # Нельзя пригласить самого себя
-        if invited_by == telegram_id:
-            invited_by = None
+        valid_partner = None
 
-        # Проверяем пригласившего
+        # Проверяем реферального партнёра
         if invited_by is not None:
 
             cur.execute("""
                 SELECT telegram_id
                 FROM users
                 WHERE telegram_id = ?
+                  AND is_partner = 1
             """, (invited_by,))
 
-            partner_exists = cur.fetchone()
+            partner = cur.fetchone()
 
-            if not partner_exists:
-                invited_by = None
-
-        # -------------------------------------------------
-        # Создаём пользователя
-        # -------------------------------------------------
+            if partner:
+                valid_partner = invited_by
 
         cur.execute("""
             INSERT INTO users (
@@ -278,41 +312,31 @@ def add_user(
                 full_name,
                 balance,
                 invited_by,
-                is_partner,
-                created_at
+                is_partner
             )
-            VALUES (?, ?, ?, 0, ?, 0, ?)
+            VALUES (?, ?, ?, 0, ?, 0)
         """, (
             telegram_id,
             username,
             full_name,
-            invited_by,
-            now_full()
+            valid_partner
         ))
 
         # -------------------------------------------------
-        # ВАЖНО:
-        # если пришёл по реферальной ссылке —
-        # сразу создаём клиента
+        # Если пришёл по реферальной ссылке,
+        # автоматически создаём клиента
         # -------------------------------------------------
 
-        if invited_by is not None:
+        if valid_partner is not None:
 
-            cur.execute("""
-                INSERT OR IGNORE INTO clients (
-                    telegram_id,
-                    partner_id,
-                    created_at
-                )
-                VALUES (?, ?, ?)
-            """, (
-                telegram_id,
-                invited_by,
-                now_full()
-            ))
+            add_client(
+                client_id=telegram_id,
+                partner_id=valid_partner,
+                connection=conn
+            )
 
     # =====================================================
-    # ПОЛЬЗОВАТЕЛЬ УЖЕ СУЩЕСТВУЕТ
+    # ПОЛЬЗОВАТЕЛЬ УЖЕ ЕСТЬ
     # =====================================================
 
     else:
@@ -320,7 +344,7 @@ def add_user(
         current_invited_by = existing[1]
 
         # -------------------------------------------------
-        # Обновляем данные Telegram
+        # Обновляем Telegram-данные
         # -------------------------------------------------
 
         cur.execute("""
@@ -336,7 +360,8 @@ def add_user(
         ))
 
         # -------------------------------------------------
-        # Если партнёр ещё НЕ закреплён
+        # Если партнёр ещё НЕ закреплён,
+        # пытаемся закрепить первого партнёра
         # -------------------------------------------------
 
         if current_invited_by is None:
@@ -344,18 +369,16 @@ def add_user(
             if invited_by is not None and invited_by != telegram_id:
 
                 cur.execute("""
-                    SELECT
-                        telegram_id,
-                        is_partner
+                    SELECT telegram_id
                     FROM users
                     WHERE telegram_id = ?
+                      AND is_partner = 1
                 """, (invited_by,))
 
-                partner = cur.fetchone()
+                partner_exists = cur.fetchone()
 
-                if partner:
+                if partner_exists:
 
-                    # Закрепляем партнёра
                     cur.execute("""
                         UPDATE users
                         SET invited_by = ?
@@ -365,19 +388,11 @@ def add_user(
                         telegram_id
                     ))
 
-                    # Создаём клиента
-                    cur.execute("""
-                        INSERT OR IGNORE INTO clients (
-                            telegram_id,
-                            partner_id,
-                            created_at
-                        )
-                        VALUES (?, ?, ?)
-                    """, (
-                        telegram_id,
-                        invited_by,
-                        now_full()
-                    ))
+                    add_client(
+                        client_id=telegram_id,
+                        partner_id=invited_by,
+                        connection=conn
+                    )
 
     conn.commit()
     conn.close()
@@ -437,17 +452,17 @@ def get_client_partner(client_id):
 
 
 # =========================================================
-# ПРОВЕРИТЬ — ЯВЛЯЕТСЯ ЛИ ПОЛЬЗОВАТЕЛЬ КЛИЕНТОМ
+# ПРОВЕРИТЬ — ЯВЛЯЕТСЯ ЛИ ПОЛЬЗОВАТЕЛЬ ПАРТНЁРОМ
 # =========================================================
 
-def is_client(telegram_id):
+def is_partner(telegram_id):
 
     conn = connect()
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT telegram_id
-        FROM clients
+        SELECT is_partner
+        FROM users
         WHERE telegram_id = ?
     """, (telegram_id,))
 
@@ -455,7 +470,10 @@ def is_client(telegram_id):
 
     conn.close()
 
-    return result is not None
+    if result:
+        return result[0] == 1
+
+    return False
 
 
 # =========================================================
@@ -467,38 +485,25 @@ def delete_user(telegram_id):
     conn = connect()
     cur = conn.cursor()
 
-    cur.execute("""
-        DELETE FROM transactions
-        WHERE partner_id = ?
-    """, (telegram_id,))
-
-    cur.execute("""
-        DELETE FROM deals
-        WHERE client_id = ?
-           OR partner_id = ?
-    """, (
-        telegram_id,
-        telegram_id
-    ))
-
+    # Удаляем заявки
     cur.execute("""
         DELETE FROM car_requests
         WHERE client_id = ?
-           OR partner_id = ?
-    """, (
-        telegram_id,
-        telegram_id
-    ))
+    """, (telegram_id,))
 
+    # Удаляем сделки клиента
+    cur.execute("""
+        DELETE FROM deals
+        WHERE client_id = ?
+    """, (telegram_id,))
+
+    # Удаляем клиента
     cur.execute("""
         DELETE FROM clients
         WHERE telegram_id = ?
-           OR partner_id = ?
-    """, (
-        telegram_id,
-        telegram_id
-    ))
+    """, (telegram_id,))
 
+    # Удаляем самого пользователя
     cur.execute("""
         DELETE FROM users
         WHERE telegram_id = ?
@@ -546,6 +551,7 @@ def add_balance(partner_id, amount):
     conn = connect()
     cur = conn.cursor()
 
+    # Проверяем пользователя
     cur.execute("""
         SELECT telegram_id
         FROM users
@@ -559,6 +565,10 @@ def add_balance(partner_id, amount):
         conn.close()
         return False
 
+    # -----------------------------------------------------
+    # Начисляем
+    # -----------------------------------------------------
+
     cur.execute("""
         UPDATE users
         SET balance = balance + ?
@@ -567,6 +577,10 @@ def add_balance(partner_id, amount):
         amount,
         partner_id
     ))
+
+    # -----------------------------------------------------
+    # История
+    # -----------------------------------------------------
 
     cur.execute("""
         INSERT INTO transactions (
@@ -680,13 +694,14 @@ def add_client(
     cur = connection.cursor()
 
     # -----------------------------------------------------
-    # Проверяем, что партнёр существует
+    # Проверяем, что партнёр действительно партнёр
     # -----------------------------------------------------
 
     cur.execute("""
         SELECT telegram_id
         FROM users
         WHERE telegram_id = ?
+          AND is_partner = 1
     """, (partner_id,))
 
     partner = cur.fetchone()
@@ -699,7 +714,7 @@ def add_client(
         return False
 
     # -----------------------------------------------------
-    # Клиент
+    # INSERT OR IGNORE защищает от дублей
     # -----------------------------------------------------
 
     cur.execute("""
@@ -723,34 +738,6 @@ def add_client(
 
 
 # =========================================================
-# ПОЛУЧИТЬ КЛИЕНТОВ ПАРТНЁРА
-# =========================================================
-
-def get_clients(partner_id):
-
-    conn = connect()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT
-            u.telegram_id,
-            u.username,
-            u.full_name
-        FROM users u
-        INNER JOIN clients c
-            ON c.telegram_id = u.telegram_id
-        WHERE c.partner_id = ?
-        ORDER BY c.id DESC
-    """, (partner_id,))
-
-    users = cur.fetchall()
-
-    conn.close()
-
-    return users
-
-
-# =========================================================
 # ПОЛУЧИТЬ КЛИЕНТА
 # =========================================================
 
@@ -761,15 +748,12 @@ def get_client(client_id):
 
     cur.execute("""
         SELECT
-            u.telegram_id,
-            u.username,
-            u.full_name,
-            c.partner_id,
-            c.created_at
-        FROM users u
-        INNER JOIN clients c
-            ON c.telegram_id = u.telegram_id
-        WHERE u.telegram_id = ?
+            id,
+            telegram_id,
+            partner_id,
+            created_at
+        FROM clients
+        WHERE telegram_id = ?
     """, (client_id,))
 
     result = cur.fetchone()
@@ -780,44 +764,61 @@ def get_client(client_id):
 
 
 # =========================================================
-# СДЕЛКИ
+# ПОЛУЧИТЬ КЛИЕНТОВ ПАРТНЁРА
 # =========================================================
 
-def create_deal(client_id, partner_id=None):
+def get_clients(partner_id):
 
     conn = connect()
     cur = conn.cursor()
 
-    # -----------------------------------------------------
-    # Если партнёр не передан —
-    # берём его из реферальной привязки клиента
-    # -----------------------------------------------------
+    cur.execute("""
+        SELECT
+            telegram_id,
+            username,
+            full_name
+        FROM users
+        WHERE invited_by = ?
+        ORDER BY telegram_id DESC
+    """, (partner_id,))
 
-    if partner_id is None:
+    users = cur.fetchall()
 
-        cur.execute("""
-            SELECT invited_by
-            FROM users
-            WHERE telegram_id = ?
-        """, (client_id,))
+    conn.close()
 
-        result = cur.fetchone()
+    return users
 
-        if not result:
 
-            conn.close()
-            return None
+# =========================================================
+# КОЛИЧЕСТВО КЛИЕНТОВ
+# =========================================================
 
-        partner_id = result[0]
+def get_clients_count(partner_id):
 
-    # -----------------------------------------------------
-    # Без партнёра сделку создавать нельзя
-    # -----------------------------------------------------
+    conn = connect()
+    cur = conn.cursor()
 
-    if partner_id is None:
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM users
+        WHERE invited_by = ?
+    """, (partner_id,))
 
-        conn.close()
-        return None
+    result = cur.fetchone()
+
+    conn.close()
+
+    return result[0] if result else 0
+
+
+# =========================================================
+# СДЕЛКИ
+# =========================================================
+
+def create_deal(client_id, partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
 
     # -----------------------------------------------------
     # Проверяем клиента
@@ -861,63 +862,7 @@ def create_deal(client_id, partner_id=None):
         return None
 
     # -----------------------------------------------------
-    # Проверяем привязку клиента
-    # -----------------------------------------------------
-
-    cur.execute("""
-        SELECT partner_id
-        FROM clients
-        WHERE telegram_id = ?
-    """, (client_id,))
-
-    client_link = cur.fetchone()
-
-    if client_link:
-
-        # Нельзя передать клиента другому партнёру
-        if client_link[0] != partner_id:
-
-            conn.close()
-            return None
-
-    else:
-
-        # Если записи клиента нет — создаём
-        cur.execute("""
-            INSERT INTO clients (
-                telegram_id,
-                partner_id,
-                created_at
-            )
-            VALUES (?, ?, ?)
-        """, (
-            client_id,
-            partner_id,
-            now_full()
-        ))
-
-    # -----------------------------------------------------
-    # Проверяем, нет ли активной сделки
-    # -----------------------------------------------------
-
-    cur.execute("""
-        SELECT id
-        FROM deals
-        WHERE client_id = ?
-          AND status != 'Завершена'
-        ORDER BY id DESC
-        LIMIT 1
-    """, (client_id,))
-
-    existing_deal = cur.fetchone()
-
-    if existing_deal:
-
-        conn.close()
-        return existing_deal[0]
-
-    # -----------------------------------------------------
-    # Создаём новую сделку
+    # Создаём сделку
     # -----------------------------------------------------
 
     cur.execute("""
@@ -928,11 +873,10 @@ def create_deal(client_id, partner_id=None):
             commission,
             created_at
         )
-        VALUES (?, ?, ?, 0, ?)
+        VALUES (?, ?, 'Новая', 0, ?)
     """, (
         client_id,
         partner_id,
-        "Новая",
         now_full()
     ))
 
@@ -945,66 +889,118 @@ def create_deal(client_id, partner_id=None):
 
 
 # =========================================================
-# ПОЛУЧИТЬ СДЕЛКИ
+# ПОЛУЧИТЬ ИЛИ СОЗДАТЬ СДЕЛКУ
+#
+# ВАЖНО:
+# Именно эту функцию будем использовать в bot.py.
+#
+# Она не создаёт новую сделку каждый раз,
+# если у клиента уже есть активная сделка.
 # =========================================================
 
-def get_deals():
+def get_or_create_deal(client_id, partner_id):
 
     conn = connect()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT
-            id,
-            client_id,
-            partner_id,
-            status,
-            commission,
-            created_at,
-            completed_at
-        FROM deals
-        ORDER BY id DESC
-    """)
-
-    data = cur.fetchall()
-
-    conn.close()
-
-    return data
-
-
-# =========================================================
-# СДЕЛКИ ПАРТНЁРА
-# =========================================================
-
-def get_partner_deals(partner_id):
-
-    conn = connect()
-    cur = conn.cursor()
+    # -----------------------------------------------------
+    # Сначала проверяем активную сделку
+    # -----------------------------------------------------
 
     cur.execute("""
-        SELECT
-            id,
-            client_id,
-            partner_id,
-            status,
-            commission,
-            created_at,
-            completed_at
+        SELECT id
         FROM deals
-        WHERE partner_id = ?
+        WHERE client_id = ?
+          AND partner_id = ?
+          AND status != 'Завершена'
         ORDER BY id DESC
+        LIMIT 1
+    """, (
+        client_id,
+        partner_id
+    ))
+
+    existing = cur.fetchone()
+
+    if existing:
+
+        deal_id = existing[0]
+
+        conn.close()
+
+        return deal_id
+
+    # -----------------------------------------------------
+    # Проверяем партнёра
+    # -----------------------------------------------------
+
+    cur.execute("""
+        SELECT telegram_id
+        FROM users
+        WHERE telegram_id = ?
+          AND is_partner = 1
     """, (partner_id,))
 
-    data = cur.fetchall()
+    partner = cur.fetchone()
 
+    if not partner:
+
+        conn.close()
+
+        return None
+
+    # -----------------------------------------------------
+    # Проверяем, что клиент действительно закреплён
+    # за этим партнёром
+    # -----------------------------------------------------
+
+    cur.execute("""
+        SELECT telegram_id
+        FROM users
+        WHERE telegram_id = ?
+          AND invited_by = ?
+    """, (
+        client_id,
+        partner_id
+    ))
+
+    client = cur.fetchone()
+
+    if not client:
+
+        conn.close()
+
+        return None
+
+    # -----------------------------------------------------
+    # Создаём сделку
+    # -----------------------------------------------------
+
+    cur.execute("""
+        INSERT INTO deals (
+            client_id,
+            partner_id,
+            status,
+            commission,
+            created_at
+        )
+        VALUES (?, ?, 'Новая', 0, ?)
+    """, (
+        client_id,
+        partner_id,
+        now_full()
+    ))
+
+    deal_id = cur.lastrowid
+
+    conn.commit()
     conn.close()
 
-    return data
+    return deal_id
 
 
 # =========================================================
-# АКТИВНАЯ СДЕЛКА КЛИЕНТА
+# ПОЛУЧИТЬ АКТИВНУЮ СДЕЛКУ КЛИЕНТА
 # =========================================================
 
 def get_active_deal(client_id):
@@ -1033,6 +1029,94 @@ def get_active_deal(client_id):
     conn.close()
 
     return deal
+
+
+# =========================================================
+# ПОЛУЧИТЬ СДЕЛКУ КЛИЕНТА
+# =========================================================
+
+def get_client_deal(client_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            partner_id,
+            status,
+            commission,
+            created_at,
+            completed_at
+        FROM deals
+        WHERE client_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (client_id,))
+
+    deal = cur.fetchone()
+
+    conn.close()
+
+    return deal
+
+
+# =========================================================
+# ПОЛУЧИТЬ СДЕЛКИ
+# =========================================================
+
+def get_deals():
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            partner_id,
+            status,
+            commission
+        FROM deals
+        ORDER BY id DESC
+    """)
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
+
+
+# =========================================================
+# ПОЛУЧИТЬ СДЕЛКИ ПАРТНЁРА
+# =========================================================
+
+def get_partner_deals(partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            partner_id,
+            status,
+            commission,
+            created_at,
+            completed_at
+        FROM deals
+        WHERE partner_id = ?
+        ORDER BY id DESC
+    """, (partner_id,))
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
 
 
 # =========================================================
@@ -1092,6 +1176,9 @@ def get_deal(deal_id):
 
 # =========================================================
 # ЗАВЕРШИТЬ СДЕЛКУ
+#
+# Повторное завершение невозможно.
+# Это защищает от двойного начисления комиссии.
 # =========================================================
 
 def finish_deal(deal_id, amount):
@@ -1128,6 +1215,7 @@ def finish_deal(deal_id, amount):
     if status == "Завершена":
 
         conn.close()
+
         return "ALREADY_COMPLETED"
 
     # -----------------------------------------------------
@@ -1145,6 +1233,7 @@ def finish_deal(deal_id, amount):
     if not partner:
 
         conn.close()
+
         return None
 
     # -----------------------------------------------------
@@ -1304,23 +1393,16 @@ def remove_partner(telegram_id):
 
 
 # =========================================================
-# =========================================================
-# ЗАЯВКА НА АВТО
-# =========================================================
+# ЗАЯВКИ НА АВТО
 # =========================================================
 
-
-# =========================================================
-# СОЗДАТЬ / ПОЛУЧИТЬ ЗАЯВКУ
-# =========================================================
-
-def get_or_create_car_request(client_id):
+def create_car_request(client_id, deal_id=None):
 
     conn = connect()
     cur = conn.cursor()
 
     # -----------------------------------------------------
-    # Уже существует
+    # Если заявка уже существует — возвращаем её ID
     # -----------------------------------------------------
 
     cur.execute("""
@@ -1333,101 +1415,42 @@ def get_or_create_car_request(client_id):
 
     if existing:
 
-        request_id = existing[0]
-
-        conn.close()
-
-        return request_id
-
-    # -----------------------------------------------------
-    # Получаем партнёра
-    # -----------------------------------------------------
-
-    cur.execute("""
-        SELECT invited_by
-        FROM users
-        WHERE telegram_id = ?
-    """, (client_id,))
-
-    user = cur.fetchone()
-
-    if not user:
-
-        conn.close()
-        return None
-
-    partner_id = user[0]
-
-    # -----------------------------------------------------
-    # Получаем / создаём сделку
-    # -----------------------------------------------------
-
-    deal_id = None
-
-    if partner_id:
-
-        # Проверяем партнёра
-        cur.execute("""
-            SELECT is_partner
-            FROM users
-            WHERE telegram_id = ?
-        """, (partner_id,))
-
-        partner = cur.fetchone()
-
-        if partner and partner[0] == 1:
+        # Если появилась сделка — привязываем её
+        if deal_id is not None:
 
             cur.execute("""
-                SELECT id
-                FROM deals
+                UPDATE car_requests
+                SET
+                    deal_id = ?,
+                    updated_at = ?
                 WHERE client_id = ?
-                  AND status != 'Завершена'
-                ORDER BY id DESC
-                LIMIT 1
-            """, (client_id,))
+            """, (
+                deal_id,
+                now_full(),
+                client_id
+            ))
 
-            deal = cur.fetchone()
+            conn.commit()
 
-            if deal:
+        conn.close()
 
-                deal_id = deal[0]
-
-            else:
-
-                cur.execute("""
-                    INSERT INTO deals (
-                        client_id,
-                        partner_id,
-                        status,
-                        commission,
-                        created_at
-                    )
-                    VALUES (?, ?, 'Новая', 0, ?)
-                """, (
-                    client_id,
-                    partner_id,
-                    now_full()
-                ))
-
-                deal_id = cur.lastrowid
+        return existing[0]
 
     # -----------------------------------------------------
-    # Создаём заявку
+    # Создаём новую заявку
     # -----------------------------------------------------
 
     cur.execute("""
         INSERT INTO car_requests (
             client_id,
-            partner_id,
             deal_id,
             status,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, 'Заполняется', ?, ?)
+        VALUES (?, ?, 'Новая', ?, ?)
     """, (
         client_id,
-        partner_id,
         deal_id,
         now_full(),
         now_full()
@@ -1442,62 +1465,52 @@ def get_or_create_car_request(client_id):
 
 
 # =========================================================
-# СОХРАНИТЬ ОТВЕТ В ЗАЯВКЕ
+# ПОЛУЧИТЬ ИЛИ СОЗДАТЬ ЗАЯВКУ
+# =========================================================
+
+def get_or_create_car_request(client_id, deal_id=None):
+
+    return create_car_request(
+        client_id=client_id,
+        deal_id=deal_id
+    )
+
+
+# =========================================================
+# ОБНОВИТЬ ПОЛЕ ЗАЯВКИ
 # =========================================================
 
 def update_car_request(client_id, field, value):
 
+    # -----------------------------------------------------
+    # Разрешённые поля.
+    #
+    # Это важно для безопасности:
+    # нельзя передать произвольное имя SQL-колонки.
+    # -----------------------------------------------------
+
     allowed_fields = {
         "country",
+        "car_type",
+        "brand",
+        "model",
         "budget",
-        "brand_model",
         "year_from",
-        "year_to",
-        "power",
-        "fuel",
-        "body",
-        "gearbox",
-        "drive",
         "mileage",
-        "color",
+        "engine",
+        "fuel",
+        "drive",
+        "body",
         "additional",
+        "free_text",
         "status"
     }
 
     if field not in allowed_fields:
-
         return False
 
     conn = connect()
     cur = conn.cursor()
-
-    # -----------------------------------------------------
-    # Если заявки нет — создаём
-    # -----------------------------------------------------
-
-    cur.execute("""
-        SELECT id
-        FROM car_requests
-        WHERE client_id = ?
-    """, (client_id,))
-
-    request = cur.fetchone()
-
-    if not request:
-
-        conn.close()
-
-        request_id = get_or_create_car_request(client_id)
-
-        if not request_id:
-            return False
-
-        conn = connect()
-        cur = conn.cursor()
-
-    # -----------------------------------------------------
-    # Обновляем поле
-    # -----------------------------------------------------
 
     query = f"""
         UPDATE car_requests
@@ -1522,7 +1535,75 @@ def update_car_request(client_id, field, value):
 
 
 # =========================================================
-# ПОЛУЧИТЬ ЗАЯВКУ
+# ОБНОВИТЬ СРАЗУ НЕСКОЛЬКО ПОЛЕЙ ЗАЯВКИ
+# =========================================================
+
+def update_car_request_fields(client_id, **fields):
+
+    allowed_fields = {
+        "country",
+        "car_type",
+        "brand",
+        "model",
+        "budget",
+        "year_from",
+        "mileage",
+        "engine",
+        "fuel",
+        "drive",
+        "body",
+        "additional",
+        "free_text",
+        "status"
+    }
+
+    if not fields:
+        return False
+
+    safe_fields = {}
+
+    for field, value in fields.items():
+
+        if field in allowed_fields:
+            safe_fields[field] = value
+
+    if not safe_fields:
+        return False
+
+    conn = connect()
+    cur = conn.cursor()
+
+    set_parts = []
+    values = []
+
+    for field, value in safe_fields.items():
+
+        set_parts.append(f"{field} = ?")
+        values.append(value)
+
+    set_parts.append("updated_at = ?")
+    values.append(now_full())
+
+    values.append(client_id)
+
+    query = f"""
+        UPDATE car_requests
+        SET {", ".join(set_parts)}
+        WHERE client_id = ?
+    """
+
+    cur.execute(query, values)
+
+    changed = cur.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return changed > 0
+
+
+# =========================================================
+# ПОЛУЧИТЬ ЗАЯВКУ КЛИЕНТА
 # =========================================================
 
 def get_car_request(client_id):
@@ -1534,21 +1615,20 @@ def get_car_request(client_id):
         SELECT
             id,
             client_id,
-            partner_id,
             deal_id,
             country,
+            car_type,
+            brand,
+            model,
             budget,
-            brand_model,
             year_from,
-            year_to,
-            power,
-            fuel,
-            body,
-            gearbox,
-            drive,
             mileage,
-            color,
+            engine,
+            fuel,
+            drive,
+            body,
             additional,
+            free_text,
             status,
             created_at,
             updated_at
@@ -1556,15 +1636,97 @@ def get_car_request(client_id):
         WHERE client_id = ?
     """, (client_id,))
 
-    request = cur.fetchone()
+    result = cur.fetchone()
 
     conn.close()
 
-    return request
+    return result
 
 
 # =========================================================
-# ЗАВЕРШИТЬ АНКЕТУ
+# ПОЛУЧИТЬ ЗАЯВКУ ПО ID
+# =========================================================
+
+def get_car_request_by_id(request_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            deal_id,
+            country,
+            car_type,
+            brand,
+            model,
+            budget,
+            year_from,
+            mileage,
+            engine,
+            fuel,
+            drive,
+            body,
+            additional,
+            free_text,
+            status,
+            created_at,
+            updated_at
+        FROM car_requests
+        WHERE id = ?
+    """, (request_id,))
+
+    result = cur.fetchone()
+
+    conn.close()
+
+    return result
+
+
+# =========================================================
+# ПОЛУЧИТЬ ЗАЯВКУ ПО СДЕЛКЕ
+# =========================================================
+
+def get_car_request_by_deal(deal_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            deal_id,
+            country,
+            car_type,
+            brand,
+            model,
+            budget,
+            year_from,
+            mileage,
+            engine,
+            fuel,
+            drive,
+            body,
+            additional,
+            free_text,
+            status,
+            created_at,
+            updated_at
+        FROM car_requests
+        WHERE deal_id = ?
+    """, (deal_id,))
+
+    result = cur.fetchone()
+
+    conn.close()
+
+    return result
+
+
+# =========================================================
+# ЗАВЕРШИТЬ ЗАЯВКУ
 # =========================================================
 
 def complete_car_request(client_id):
@@ -1575,7 +1737,7 @@ def complete_car_request(client_id):
     cur.execute("""
         UPDATE car_requests
         SET
-            status = 'Новая',
+            status = 'Заполнена',
             updated_at = ?
         WHERE client_id = ?
     """, (
@@ -1592,107 +1754,7 @@ def complete_car_request(client_id):
 
 
 # =========================================================
-# ЗАЯВКИ ПАРТНЁРА
-# =========================================================
-
-def get_partner_requests(partner_id):
-
-    conn = connect()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT
-            r.id,
-            r.client_id,
-            r.deal_id,
-            r.country,
-            r.budget,
-            r.brand_model,
-            r.year_from,
-            r.year_to,
-            r.power,
-            r.fuel,
-            r.body,
-            r.gearbox,
-            r.drive,
-            r.mileage,
-            r.color,
-            r.additional,
-            r.status,
-            r.created_at,
-
-            u.username,
-            u.full_name
-
-        FROM car_requests r
-
-        LEFT JOIN users u
-            ON u.telegram_id = r.client_id
-
-        WHERE r.partner_id = ?
-
-        ORDER BY r.id DESC
-    """, (partner_id,))
-
-    data = cur.fetchall()
-
-    conn.close()
-
-    return data
-
-
-# =========================================================
-# ПОЛУЧИТЬ ЗАЯВКУ ПО ID
-# =========================================================
-
-def get_car_request_by_id(request_id):
-
-    conn = connect()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT
-            r.id,
-            r.client_id,
-            r.partner_id,
-            r.deal_id,
-            r.country,
-            r.budget,
-            r.brand_model,
-            r.year_from,
-            r.year_to,
-            r.power,
-            r.fuel,
-            r.body,
-            r.gearbox,
-            r.drive,
-            r.mileage,
-            r.color,
-            r.additional,
-            r.status,
-            r.created_at,
-            r.updated_at,
-
-            u.username,
-            u.full_name
-
-        FROM car_requests r
-
-        LEFT JOIN users u
-            ON u.telegram_id = r.client_id
-
-        WHERE r.id = ?
-    """, (request_id,))
-
-    request = cur.fetchone()
-
-    conn.close()
-
-    return request
-
-
-# =========================================================
-# СТАТУС ЗАЯВКИ
+# ИЗМЕНИТЬ СТАТУС ЗАЯВКИ
 # =========================================================
 
 def set_request_status(request_id, status):
@@ -1718,3 +1780,361 @@ def set_request_status(request_id, status):
     conn.close()
 
     return changed > 0
+
+
+# =========================================================
+# ЗАЯВКИ ПАРТНЁРА
+# =========================================================
+
+def get_partner_requests(partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            cr.id,
+            cr.client_id,
+            cr.deal_id,
+            cr.country,
+            cr.car_type,
+            cr.brand,
+            cr.model,
+            cr.budget,
+            cr.year_from,
+            cr.mileage,
+            cr.engine,
+            cr.fuel,
+            cr.drive,
+            cr.body,
+            cr.additional,
+            cr.free_text,
+            cr.status,
+            cr.created_at
+        FROM car_requests cr
+        JOIN deals d
+            ON d.id = cr.deal_id
+        WHERE d.partner_id = ?
+        ORDER BY cr.id DESC
+    """, (partner_id,))
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
+
+
+# =========================================================
+# ВСЕ ЗАЯВКИ
+# =========================================================
+
+def get_all_car_requests():
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            deal_id,
+            country,
+            car_type,
+            brand,
+            model,
+            budget,
+            year_from,
+            mileage,
+            engine,
+            fuel,
+            drive,
+            body,
+            additional,
+            free_text,
+            status,
+            created_at,
+            updated_at
+        FROM car_requests
+        ORDER BY id DESC
+    """)
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
+
+
+# =========================================================
+# НОВЫЕ ЗАЯВКИ
+# =========================================================
+
+def get_new_car_requests():
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            client_id,
+            deal_id,
+            country,
+            car_type,
+            brand,
+            model,
+            budget,
+            year_from,
+            mileage,
+            engine,
+            fuel,
+            drive,
+            body,
+            additional,
+            free_text,
+            status,
+            created_at,
+            updated_at
+        FROM car_requests
+        WHERE status = 'Новая'
+        ORDER BY id DESC
+    """)
+
+    data = cur.fetchall()
+
+    conn.close()
+
+    return data
+
+
+# =========================================================
+# КОЛИЧЕСТВО ЗАЯВОК ПАРТНЁРА
+# =========================================================
+
+def get_partner_requests_count(partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM car_requests cr
+        JOIN deals d
+            ON d.id = cr.deal_id
+        WHERE d.partner_id = ?
+    """, (partner_id,))
+
+    result = cur.fetchone()
+
+    conn.close()
+
+    return result[0] if result else 0
+
+
+# =========================================================
+# СТАТИСТИКА
+# =========================================================
+
+def get_statistics():
+
+    conn = connect()
+    cur = conn.cursor()
+
+    # Пользователи
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM users
+    """)
+
+    users_count = cur.fetchone()[0]
+
+    # Партнёры
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM users
+        WHERE is_partner = 1
+    """)
+
+    partners_count = cur.fetchone()[0]
+
+    # Клиенты
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM clients
+    """)
+
+    clients_count = cur.fetchone()[0]
+
+    # Сделки
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM deals
+    """)
+
+    deals_count = cur.fetchone()[0]
+
+    # Активные сделки
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM deals
+        WHERE status != 'Завершена'
+    """)
+
+    active_deals_count = cur.fetchone()[0]
+
+    # Завершённые сделки
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM deals
+        WHERE status = 'Завершена'
+    """)
+
+    completed_deals_count = cur.fetchone()[0]
+
+    # Заявки
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM car_requests
+    """)
+
+    requests_count = cur.fetchone()[0]
+
+    # Новые заявки
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM car_requests
+        WHERE status = 'Новая'
+    """)
+
+    new_requests_count = cur.fetchone()[0]
+
+    # Общий баланс
+    cur.execute("""
+        SELECT COALESCE(SUM(balance), 0)
+        FROM users
+        WHERE is_partner = 1
+    """)
+
+    total_balance = cur.fetchone()[0]
+
+    # Выплаченные комиссии
+    cur.execute("""
+        SELECT COALESCE(SUM(amount), 0)
+        FROM transactions
+        WHERE type = 'Комиссия'
+    """)
+
+    total_commission = cur.fetchone()[0]
+
+    conn.close()
+
+    return {
+        "users": users_count,
+        "partners": partners_count,
+        "clients": clients_count,
+        "deals": deals_count,
+        "active_deals": active_deals_count,
+        "completed_deals": completed_deals_count,
+        "requests": requests_count,
+        "new_requests": new_requests_count,
+        "total_balance": total_balance,
+        "total_commission": total_commission
+    }
+
+
+# =========================================================
+# ПРОВЕРКА / ИСПРАВЛЕНИЕ СВЯЗИ КЛИЕНТА
+# =========================================================
+
+def ensure_client_connection(client_id, partner_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    # -----------------------------------------------------
+    # Проверяем партнёра
+    # -----------------------------------------------------
+
+    cur.execute("""
+        SELECT telegram_id
+        FROM users
+        WHERE telegram_id = ?
+          AND is_partner = 1
+    """, (partner_id,))
+
+    partner = cur.fetchone()
+
+    if not partner:
+
+        conn.close()
+
+        return False
+
+    # -----------------------------------------------------
+    # Проверяем клиента
+    # -----------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            telegram_id,
+            invited_by
+        FROM users
+        WHERE telegram_id = ?
+    """, (client_id,))
+
+    client = cur.fetchone()
+
+    if not client:
+
+        conn.close()
+
+        return False
+
+    # -----------------------------------------------------
+    # Если клиент уже закреплён за другим партнёром,
+    # НИКОГДА его не переносим.
+    # -----------------------------------------------------
+
+    if client[1] is not None and client[1] != partner_id:
+
+        conn.close()
+
+        return False
+
+    # -----------------------------------------------------
+    # Закрепляем
+    # -----------------------------------------------------
+
+    if client[1] is None:
+
+        cur.execute("""
+            UPDATE users
+            SET invited_by = ?
+            WHERE telegram_id = ?
+        """, (
+            partner_id,
+            client_id
+        ))
+
+    # -----------------------------------------------------
+    # Добавляем в clients
+    # -----------------------------------------------------
+
+    cur.execute("""
+        INSERT OR IGNORE INTO clients (
+            telegram_id,
+            partner_id,
+            created_at
+        )
+        VALUES (?, ?, ?)
+    """, (
+        client_id,
+        partner_id,
+        now_full()
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return True
