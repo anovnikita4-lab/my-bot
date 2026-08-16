@@ -574,3 +574,39 @@ def get_partners():
     conn.close()
 
     return users
+    
+def add_partner(telegram_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET is_partner = 1
+        WHERE telegram_id = ?
+    """, (telegram_id,))
+
+    conn.commit()
+    changed = cur.rowcount
+
+    conn.close()
+
+    return changed
+
+def remove_partner(telegram_id):
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET is_partner = 0
+        WHERE telegram_id = ?
+    """, (telegram_id,))
+
+    conn.commit()
+    changed = cur.rowcount
+
+    conn.close()
+
+    return changed
