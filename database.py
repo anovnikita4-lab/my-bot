@@ -16,7 +16,15 @@ def connect():
 def init_db():
     conn = connect()
     cur = conn.cursor()
-
+    
+    try:
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN is_partner INTEGER DEFAULT 0
+        """)
+    except Exception:
+        pass
+        
     # пользователи
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
@@ -556,6 +564,7 @@ def get_partners():
             full_name,
             balance
         FROM users
+        WHERE is_partner = 1
         ORDER BY telegram_id DESC
         """
     )
