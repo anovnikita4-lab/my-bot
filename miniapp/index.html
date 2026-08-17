@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0d12">
+  <title>NY — Автомобили</title>
+  <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand-wrap">
+      <div class="brand">NY<span>.</span></div>
+      <div class="subtitle">ЯПОНИЯ · КИТАЙ · КОРЕЯ</div>
+    </div>
+    <button class="profile-mini" id="profileBtn" aria-label="Профиль"><span id="avatar">NY</span></button>
+  </header>
+  <main id="screen"></main>
+  <nav class="bottom-nav" id="bottomNav">
+    <button data-page="home" class="active"><i>⌂</i><span>Главная</span></button>
+    <button data-page="request"><i>🚗</i><span>Подбор</span></button>
+    <button data-page="requests"><i>▤</i><span>Заявки</span></button>
+    <button data-page="partner"><i>🤝</i><span>Партнёр</span></button>
+    <button data-page="profile"><i>☻</i><span>Профиль</span></button>
+  </nav>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
