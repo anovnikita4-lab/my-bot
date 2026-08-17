@@ -26,6 +26,7 @@ from database import (
     get_partner_deals,
     get_history,
     get_request,
+    delete_client_request,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "miniapp")
@@ -201,6 +202,42 @@ async def api_submit_request(request):
     return web.json_response({"ok": True, "request_id": request_id, "deal_id": deal_id, "telegram_contact": f"tg://user?id={uid}"})
 
 
+async def api_delete_request(request):
+    u, _ = await get_context(request)
+    data = await request.json()
+
+    try:
+        request_id = int(data.get("request_id"))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "Некорректный номер заявки."}, status=400)
+
+    result = delete_client_request(request_id, u["telegram_id"])
+
+    if result == "not_found":
+        return web.json_response({"ok": False, "error": "Заявка не найдена."}, status=404)
+    if result == "forbidden":
+        return web.json_response({"ok": False, "error": "Нельзя удалить эту заявку."}, status=403)
+    if result == "locked":
+        return web.json_response({
+            "ok": False,
+            "error": "Заявку уже нельзя удалить: сделка находится в работе или завершена.",
+        }, status=409)
+
+    bot = request.app["bot"]
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"🗑 <b>Клиент удалил заявку #{request_id}</b>\n\n"
+            f"👤 <a href=\"tg://user?id={u['telegram_id']}\">{html.escape(u.get('full_name') or 'Клиент')}</a>\n"
+            f"🆔 <code>{u['telegram_id']}</code>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    return web.json_response({"ok": True, "request_id": request_id})
+
+
 async def api_partner_start(request):
     u, _ = await get_context(request)
     set_partner(u["telegram_id"], True)
@@ -244,6 +281,7 @@ async def start_web_server(bot):
     app.router.add_get("/api/me", api_me)
     app.router.add_get("/api/dashboard", api_dashboard)
     app.router.add_post("/api/request", api_submit_request)
+    app.router.add_post("/api/request/delete", api_delete_request)
     app.router.add_post("/api/partner/start", api_partner_start)
     app.router.add_post("/api/partner/stop", api_partner_stop)
     app.router.add_post("/api/support", api_support)
