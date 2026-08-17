@@ -257,9 +257,93 @@ def get_request(request_id):
 
 def get_client_requests(client_id):
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM car_requests WHERE client_id=? ORDER BY id DESC", (client_id,)).fetchall()
+    rows = conn.execute("""
+        SELECT cr.*, d.status AS deal_status
+        FROM car_requests cr
+        LEFT JOIN deals d ON d.id = cr.deal_id
+        WHERE cr.client_id=?
+        ORDER BY cr.id DESC
+    """, (client_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def delete_client_request(request_id, client_id):
+    """
+    Safely delete a client's own request together with its unfinished deal.
+
+    Completed or in-progress deals are protected so the client cannot destroy
+    the commercial history after work has started or a commission has been paid.
+
+    Returns one of:
+    - "deleted"
+    - "not_found"
+    - "forbidden"
+    - "locked"
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    request = cur.execute(
+        "SELECT * FROM car_requests WHERE id=? AND client_id=?",
+        (request_id, client_id),
+    ).fetchone()
+
+    if not request:
+        conn.close()
+        return "not_found"
+
+    deal = None
+    if request["deal_id"]:
+        deal = cur.execute(
+            "SELECT * FROM deals WHERE id=? AND client_id=?",
+            (request["deal_id"], client_id),
+        ).fetchone()
+
+    if deal and deal["status"] in {"Завершена", "В работе"}:
+        conn.close()
+        return "locked"
+
+    # Remove the linked unfinished deal first, then the request itself.
+    if deal:
+        cur.execute(
+            "DELETE FROM deals WHERE id=? AND client_id=?",
+            (deal["id"], client_id),
+        )
+
+    cur.execute(
+        "DELETE FROM car_requests WHERE id=? AND client_id=?",
+        (request_id, client_id),
+    )
+
+    # Restore a sensible client status based on the remaining latest request.
+    remaining = cur.execute("""
+        SELECT cr.status, d.status AS deal_status
+        FROM car_requests cr
+        LEFT JOIN deals d ON d.id = cr.deal_id
+        WHERE cr.client_id=?
+        ORDER BY cr.id DESC
+        LIMIT 1
+    """, (client_id,)).fetchone()
+
+    if remaining:
+        if remaining["deal_status"] == "Завершена":
+            client_status = "Сделка завершена"
+        elif remaining["deal_status"] == "В работе":
+            client_status = "Сделка в работе"
+        else:
+            client_status = remaining["status"] or "Заявка создана"
+    else:
+        client_status = "Новый"
+
+    cur.execute(
+        "UPDATE clients SET status=? WHERE client_id=?",
+        (client_status, client_id),
+    )
+
+    conn.commit()
+    conn.close()
+    return "deleted"
 
 def get_all_requests():
     conn = get_connection()
